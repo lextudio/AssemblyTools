@@ -39,6 +39,7 @@ namespace LeXtudio.Metadata.Mutable
         private MetadataBuilder _metadata;
         private BlobBuilder _ilStream;
         private BlobBuilder _managedResources;
+        private BlobBuilder _mappedFieldData;
         private MethodBodyStreamEncoder _methodBodyEncoder;
         private AssemblyDefinitionHandle _assemblyDefHandle;
         private ModuleDefinitionHandle _moduleDefHandle;
@@ -131,6 +132,7 @@ namespace LeXtudio.Metadata.Mutable
             _metadata = new MetadataBuilder();
             _ilStream = new BlobBuilder();
             _managedResources = new BlobBuilder();
+            _mappedFieldData = new BlobBuilder();
             _methodBodyEncoder = new MethodBodyStreamEncoder(_ilStream);
             _assemblyDefHandle = default;
             _moduleDefHandle = default;
@@ -397,8 +399,20 @@ namespace LeXtudio.Metadata.Mutable
             // Write initial value (RVA) if present
             if (field.InitialValue != null && field.InitialValue.Length > 0)
             {
-                // RVA fields need special handling in PE builder
+                AlignMappedFieldData(4);
+                var offset = _mappedFieldData.Count;
+                _mappedFieldData.WriteBytes(field.InitialValue);
+                _metadata.AddFieldRelativeVirtualAddress(handle, offset);
             }
+        }
+
+        private void AlignMappedFieldData(int alignment)
+        {
+            var remainder = _mappedFieldData.Count % alignment;
+            if (remainder == 0)
+                return;
+
+            _mappedFieldData.WriteBytes(0, alignment - remainder);
         }
 
         private void WriteMethodDefinition(MutableMethodDefinition method)
@@ -2199,7 +2213,7 @@ namespace LeXtudio.Metadata.Mutable
                 peHeaderBuilder,
                 new MetadataRootBuilder(_metadata),
                 _ilStream,
-                mappedFieldData: null,
+                mappedFieldData: _mappedFieldData,
                 managedResources: _managedResources,
                 nativeResources: null,
                 debugDirectoryBuilder: null,

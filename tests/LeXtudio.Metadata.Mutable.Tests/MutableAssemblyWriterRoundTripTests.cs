@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Runtime.Loader;
 using LeXtudio.Metadata.Mutable;
@@ -324,6 +325,56 @@ public class MutableAssemblyWriterRoundTripTests
         }
     }
 
+    [Fact]
+    public void RoundTrip_InitializedData_PreservesFieldRvaAndClassLayout()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_field_rva_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var asmPath = Path.Combine(tempDir, "FieldRvaRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "FieldRvaRoundTrip_rw.dll");
+
+        try
+        {
+            EmitInitializedDataAssembly(asmPath);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            using (var stream = File.OpenRead(rewrittenPath))
+            using (var peReader = new PEReader(stream))
+            {
+                var metadata = peReader.GetMetadataReader();
+                Assert.Equal(1, metadata.GetTableRowCount(TableIndex.FieldRva));
+
+                var field = metadata.GetFieldDefinition(MetadataTokens.FieldDefinitionHandle(1));
+                Assert.NotEqual(0, field.GetRelativeVirtualAddress());
+
+                var arrayType = metadata.TypeDefinitions
+                    .Select(metadata.GetTypeDefinition)
+                    .Single(t => metadata.GetString(t.Name) == "$ArrayType$4");
+                Assert.Equal(4, arrayType.GetLayout().Size);
+
+                var data = peReader.GetSectionData(field.GetRelativeVirtualAddress()).GetReader(0, 4).ReadBytes(4);
+                Assert.Equal(new byte[] { 1, 2, 3, 4 }, data);
+            }
+
+            var ctx = new AssemblyLoadContext("FieldRvaRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            var loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            var loadException = Record.Exception(() => loaded.GetTypes());
+            ctx.Unload();
+
+            Assert.Null(loadException);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
     private static void EmitArgumentRoundTripAssembly(string outputPath)
     {
         var asmName = new AssemblyName("ArgumentRoundTrip");
@@ -344,6 +395,20 @@ public class MutableAssemblyWriterRoundTripTests
         il.Emit(OpCodes.Ret);
 
         typeBuilder.CreateType();
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitInitializedDataAssembly(string outputPath)
+    {
+        var asmName = new AssemblyName("FieldRvaRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("FieldRvaRoundTrip");
+
+        modBuilder.DefineInitializedData(
+            "Blob",
+            new byte[] { 1, 2, 3, 4 },
+            FieldAttributes.Assembly | FieldAttributes.Static | FieldAttributes.InitOnly);
+
         asmBuilder.Save(outputPath);
     }
 

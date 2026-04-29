@@ -268,6 +268,9 @@ namespace LeXtudio.Metadata.Mutable
                 {
                     MetadataToken = MetadataTokens.GetToken(handle)
                 };
+                var layout = typeDef.GetLayout();
+                type.PackingSize = layout.PackingSize;
+                type.ClassSize = layout.Size;
                 type.Module = _module;
                 type.IsValueType = IsValueType(typeDef);
                 type.IsEnum = IsEnum(typeDef);
@@ -480,8 +483,12 @@ namespace LeXtudio.Metadata.Mutable
                 var rva = fieldDef.GetRelativeVirtualAddress();
                 if (rva != 0)
                 {
-                    // Read initial value from RVA
-                    // This requires more complex handling of field size
+                    var size = GetFieldInitialValueSize(signature);
+                    if (size > 0)
+                    {
+                        var reader = _peReader.GetSectionData(rva).GetReader(0, size);
+                        field.InitialValue = reader.ReadBytes(size);
+                    }
                 }
             }
 
@@ -497,6 +504,39 @@ namespace LeXtudio.Metadata.Mutable
 
             _fieldDefCache[handle] = field;
             return field;
+        }
+
+        private int GetFieldInitialValueSize(MutableTypeReference fieldType)
+        {
+            if (fieldType is MutableTypeDefinition typeDefinition && typeDefinition.ClassSize > 0)
+                return typeDefinition.ClassSize;
+
+            var resolvedType = _module.GetType(fieldType?.FullName);
+            if (resolvedType?.ClassSize > 0)
+                return resolvedType.ClassSize;
+
+            var fullName = fieldType?.FullName;
+            switch (fullName)
+            {
+                case "System.Boolean":
+                case "System.Byte":
+                case "System.SByte":
+                    return 1;
+                case "System.Char":
+                case "System.Int16":
+                case "System.UInt16":
+                    return 2;
+                case "System.Int32":
+                case "System.UInt32":
+                case "System.Single":
+                    return 4;
+                case "System.Int64":
+                case "System.UInt64":
+                case "System.Double":
+                    return 8;
+                default:
+                    return 0;
+            }
         }
 
         private MutableMethodDefinition ReadMethodDefinition(MethodDefinitionHandle handle, MutableTypeDefinition declaringType)
