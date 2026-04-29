@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.Loader;
@@ -16,6 +17,41 @@ namespace LeXtudio.Metadata.Mutable.Tests;
 /// </summary>
 public class MutableAssemblyWriterRoundTripTests
 {
+    [Fact]
+    public void RoundTrip_ShortInlineArg_PreservesArgumentIndex()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_arg_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var asmPath = Path.Combine(tempDir, "ArgumentRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "ArgumentRoundTrip_rw.dll");
+
+        try
+        {
+            EmitArgumentRoundTripAssembly(asmPath);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            var rewritten = reader.Read(rewrittenPath, new MutableReaderParameters { ReadMethodBodies = true });
+            var method = rewritten.MainModule.Types
+                .Single(t => t.FullName == "RoundTripTest.ArgumentWriter")
+                .Methods
+                .Single(m => m.Name == "StoreSecondArgument");
+
+            var starg = method.Body!.Instructions.Single(i => i.OpCode.Name == "starg.s");
+            var operand = Assert.IsType<byte>(starg.Operand);
+            Assert.Equal(2, operand);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
     [Fact]
     public void RoundTrip_DictionaryForeach_DoesNotCorruptEnumeratorStruct()
     {
@@ -75,6 +111,29 @@ public class MutableAssemblyWriterRoundTripTests
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { }
         }
+    }
+
+    private static void EmitArgumentRoundTripAssembly(string outputPath)
+    {
+        var asmName = new AssemblyName("ArgumentRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("ArgumentRoundTrip");
+        var typeBuilder = modBuilder.DefineType("RoundTripTest.ArgumentWriter",
+            TypeAttributes.Public | TypeAttributes.Class);
+
+        var methodBuilder = typeBuilder.DefineMethod("StoreSecondArgument",
+            MethodAttributes.Public,
+            typeof(object),
+            new[] { typeof(object), typeof(object) });
+
+        var il = methodBuilder.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Starg_S, (short)2);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ret);
+
+        typeBuilder.CreateType();
+        asmBuilder.Save(outputPath);
     }
 
     private static void EmitTestAssembly(string outputPath)

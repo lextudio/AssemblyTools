@@ -636,7 +636,7 @@ namespace LeXtudio.Metadata.Mutable
             
             foreach (var instruction in body.Instructions)
             {
-                EncodeInstruction(bytes, instruction);
+                EncodeInstruction(bytes, body, instruction);
             }
             
             return bytes.ToArray();
@@ -654,7 +654,7 @@ namespace LeXtudio.Metadata.Mutable
             return offset;
         }
 
-        private void EncodeInstruction(List<byte> bytes, MutableInstruction instruction)
+        private void EncodeInstruction(List<byte> bytes, MutableMethodBody body, MutableInstruction instruction)
         {
             // Encode opcode
             if (instruction.OpCode.Size == 2)
@@ -668,10 +668,10 @@ namespace LeXtudio.Metadata.Mutable
             }
 
             // Encode operand
-            EncodeOperand(bytes, instruction);
+            EncodeOperand(bytes, body, instruction);
         }
 
-        private void EncodeOperand(List<byte> bytes, MutableInstruction instruction)
+        private void EncodeOperand(List<byte> bytes, MutableMethodBody body, MutableInstruction instruction)
         {
             switch (instruction.OpCode.OperandType)
             {
@@ -732,19 +732,19 @@ namespace LeXtudio.Metadata.Mutable
                     break;
                     
                 case MutableOperandType.ShortInlineVar:
-                    WriteShortInlineIndex(bytes, (instruction.Operand as MutableVariableDefinition)?.Index);
+                    WriteShortInlineIndex(bytes, GetLocalIndex(instruction.Operand));
                     break;
                     
                 case MutableOperandType.InlineVar:
-                    WriteInlineIndex(bytes, (instruction.Operand as MutableVariableDefinition)?.Index);
+                    WriteInlineIndex(bytes, GetLocalIndex(instruction.Operand));
                     break;
                     
                 case MutableOperandType.ShortInlineArg:
-                    WriteShortInlineIndex(bytes, instruction.Operand as int?);
+                    WriteShortInlineIndex(bytes, GetArgumentIndex(body, instruction.Operand));
                     break;
                     
                 case MutableOperandType.InlineArg:
-                    WriteInlineIndex(bytes, instruction.Operand as int?);
+                    WriteInlineIndex(bytes, GetArgumentIndex(body, instruction.Operand));
                     break;
                     
                 case MutableOperandType.InlineSwitch:
@@ -755,6 +755,41 @@ namespace LeXtudio.Metadata.Mutable
                     // Standalone signature
                     WriteInt32(bytes, instruction.Operand is int sigToken ? sigToken : 0);
                     break;
+            }
+        }
+
+        private static int? GetLocalIndex(object operand)
+        {
+            if (operand is MutableVariableDefinition variable)
+                return variable.Index;
+
+            return GetNumericIndex(operand);
+        }
+
+        private static int? GetArgumentIndex(MutableMethodBody body, object operand)
+        {
+            if (operand is MutableParameterDefinition parameter)
+                return parameter.Index + (body.Method?.HasThis == true ? 1 : 0);
+
+            return GetNumericIndex(operand);
+        }
+
+        private static int? GetNumericIndex(object operand)
+        {
+            switch (operand)
+            {
+                case byte b:
+                    return b;
+                case sbyte sb:
+                    return sb;
+                case short s:
+                    return s;
+                case ushort us:
+                    return us;
+                case int i:
+                    return i;
+                default:
+                    return null;
             }
         }
 
