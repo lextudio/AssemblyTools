@@ -2287,6 +2287,8 @@ namespace LeXtudio.Metadata.Mutable
                 corFlags |= CorFlags.Requires32Bit;
             if (module.Attributes.HasFlag(MutableModuleAttributes.Preferred32Bit))
                 corFlags |= CorFlags.Prefers32Bit;
+            if (module.Attributes.HasFlag(MutableModuleAttributes.StrongNameSigned) || _parameters.StrongNameKeyBlob != null)
+                corFlags |= CorFlags.StrongNameSigned;
 
             MethodDefinitionHandle entryPoint = default;
             if (module.Kind != MutableModuleKind.Dll)
