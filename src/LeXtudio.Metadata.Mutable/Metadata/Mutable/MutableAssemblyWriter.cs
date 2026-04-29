@@ -1417,12 +1417,41 @@ namespace LeXtudio.Metadata.Mutable
             }
         }
 
-        private static string GetCustomAttributeTypeName(MutableTypeReference typeRef)
+        private string GetCustomAttributeTypeName(MutableTypeReference typeRef)
         {
             if (typeRef == null)
                 return null;
 
-            return typeRef.FullName?.Replace('/', '+');
+            var typeName = typeRef.FullName?.Replace('/', '+');
+            var assemblyName = GetCustomAttributeTypeAssemblyName(typeRef);
+            return string.IsNullOrEmpty(assemblyName)
+                ? typeName
+                : $"{typeName}, {assemblyName}";
+        }
+
+        private string GetCustomAttributeTypeAssemblyName(MutableTypeReference typeRef)
+        {
+            var rootType = typeRef;
+            while (rootType?.DeclaringType != null)
+            {
+                rootType = rootType.DeclaringType;
+            }
+
+            if (rootType?.Scope is MutableAssemblyNameReference asmRef)
+                return asmRef.FullName;
+
+            if (rootType?.Scope is MutableAssemblyNameDefinition asmDef)
+                return asmDef.FullName;
+
+            var module = rootType?.Scope as MutableModuleDefinition ?? rootType?.Module;
+            if (module != null &&
+                !ReferenceEquals(module, _assembly.MainModule) &&
+                module.Assembly?.Name != null)
+            {
+                return module.Assembly.Name.FullName;
+            }
+
+            return null;
         }
 
         private static void WritePrimitiveValue(BlobBuilder builder, object value, MutableTypeReference type)

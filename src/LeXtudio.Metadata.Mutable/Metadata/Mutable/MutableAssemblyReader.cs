@@ -1732,6 +1732,7 @@ namespace LeXtudio.Metadata.Mutable
 
             var typeName = name;
             var commaIndex = typeName.IndexOf(',');
+            var assemblyName = commaIndex >= 0 ? typeName.Substring(commaIndex + 1).Trim() : null;
             if (commaIndex >= 0)
                 typeName = typeName.Substring(0, commaIndex);
 
@@ -1760,6 +1761,11 @@ namespace LeXtudio.Metadata.Mutable
             var rootName = lastDot >= 0 ? rootPart.Substring(lastDot + 1) : rootPart;
 
             MutableTypeReference current = new MutableTypeReference(ns, rootName, _module);
+            if (!string.IsNullOrEmpty(assemblyName))
+            {
+                current.Scope = CreateAssemblyNameReference(assemblyName);
+            }
+
             for (int i = 1; i < nestedParts.Length; i++)
             {
                 var nested = new MutableTypeReference(string.Empty, nestedParts[i], _module)
@@ -1770,6 +1776,24 @@ namespace LeXtudio.Metadata.Mutable
             }
 
             return current;
+        }
+
+        private static MutableAssemblyNameReference CreateAssemblyNameReference(string assemblyName)
+        {
+            try
+            {
+                var parsed = new AssemblyName(assemblyName);
+                return new MutableAssemblyNameReference(parsed.Name, parsed.Version)
+                {
+                    Culture = parsed.CultureName,
+                    PublicKeyToken = parsed.GetPublicKeyToken(),
+                    Attributes = parsed.Flags
+                };
+            }
+            catch
+            {
+                return new MutableAssemblyNameReference(assemblyName, null);
+            }
         }
 
         /// <inheritdoc/>

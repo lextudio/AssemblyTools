@@ -375,6 +375,65 @@ public class MutableAssemblyWriterRoundTripTests
         }
     }
 
+    [Fact]
+    public void RoundTrip_CustomAttributeSystemTypeValue_PreservesAssemblyQualifiedName()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_custom_attr_type_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var dependencyPath = Path.Combine(tempDir, "CustomAttributeTypeDependency.dll");
+        var asmPath = Path.Combine(tempDir, "CustomAttributeTypeRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "CustomAttributeTypeRoundTrip_rw.dll");
+
+        try
+        {
+            EmitExternalTypeAssembly(dependencyPath);
+            var dependency = AssemblyLoadContext.Default.LoadFromAssemblyPath(dependencyPath);
+            var externalType = dependency.GetType("ExternalNamespace.ExternalType", throwOnError: true)!;
+            EmitCustomAttributeTypeValueAssembly(asmPath, externalType);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            using (var stream = File.OpenRead(rewrittenPath))
+            using (var peReader = new PEReader(stream))
+            {
+                var metadata = peReader.GetMetadataReader();
+                var matchingAttribute = metadata.CustomAttributes
+                    .Select(metadata.GetCustomAttribute)
+                    .Select(attribute => metadata.GetBlobBytes(attribute.Value))
+                    .Select(bytes => System.Text.Encoding.UTF8.GetString(bytes))
+                    .Single(value => value.Contains("ExternalNamespace.ExternalType", StringComparison.Ordinal));
+
+                Assert.Contains("CustomAttributeTypeDependency", matchingAttribute);
+            }
+
+            var ctx = new AssemblyLoadContext("CustomAttributeTypeRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            ctx.Resolving += (_, name) =>
+                name.Name == "CustomAttributeTypeDependency"
+                    ? ctx.LoadFromAssemblyPath(dependencyPath)
+                    : null;
+
+            var loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            var targetType = loaded.GetType("RoundTripTest.Target", throwOnError: true)!;
+            var typeArgument = targetType.GetCustomAttributesData()
+                .Single(attribute => attribute.AttributeType.Name == "TypeMetadataAttribute")
+                .ConstructorArguments
+                .Single()
+                .Value;
+
+            Assert.Equal("ExternalNamespace.ExternalType", ((Type)typeArgument!).FullName);
+            ctx.Unload();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
     private static void EmitArgumentRoundTripAssembly(string outputPath)
     {
         var asmName = new AssemblyName("ArgumentRoundTrip");
@@ -395,6 +454,53 @@ public class MutableAssemblyWriterRoundTripTests
         il.Emit(OpCodes.Ret);
 
         typeBuilder.CreateType();
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitExternalTypeAssembly(string outputPath)
+    {
+        var asmName = new AssemblyName("CustomAttributeTypeDependency");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("CustomAttributeTypeDependency");
+        var typeBuilder = modBuilder.DefineType(
+            "ExternalNamespace.ExternalType",
+            TypeAttributes.Public | TypeAttributes.Class);
+
+        typeBuilder.CreateType();
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitCustomAttributeTypeValueAssembly(string outputPath, Type externalType)
+    {
+        var asmName = new AssemblyName("CustomAttributeTypeRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("CustomAttributeTypeRoundTrip");
+
+        var attributeBuilder = modBuilder.DefineType(
+            "RoundTripTest.TypeMetadataAttribute",
+            TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.Sealed,
+            typeof(Attribute));
+        var constructor = attributeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            new[] { typeof(Type) });
+        var il = constructor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(Attribute).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            Type.EmptyTypes,
+            modifiers: null)!);
+        il.Emit(OpCodes.Ret);
+
+        attributeBuilder.CreateType();
+
+        var targetBuilder = modBuilder.DefineType(
+            "RoundTripTest.Target",
+            TypeAttributes.Public | TypeAttributes.Class);
+        targetBuilder.SetCustomAttribute(new CustomAttributeBuilder(constructor, new object[] { externalType }));
+        targetBuilder.CreateType();
+
         asmBuilder.Save(outputPath);
     }
 
