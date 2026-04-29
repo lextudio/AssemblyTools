@@ -229,7 +229,7 @@ namespace LeXtudio.Metadata.Mutable
         /// <summary>
         /// Initializes the type system for this module.
         /// </summary>
-        internal void InitializeTypeSystem()
+        public void InitializeTypeSystem()
         {
             TypeSystem = new MutableTypeSystem(this);
         }

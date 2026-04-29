@@ -2,7 +2,7 @@
 
 - **Purpose:** Consolidate duplicated mutable metadata/IL model and reader/writer code into a single shared library so multiple consumers (wxsg, Obfuscar, others) can reuse the same implementation.
 - **Location:** `AssemblyTools/src/LeXtudio.Metadata.Mutable`
-- **NuGet/TFM choices:** library targets `net8.0`. Tests that exercise PersistedAssemblyBuilder require `net9.0` and live under `AssemblyTools/tests/LeXtudio.Metadata.Mutable.Tests`.
+- **NuGet/TFM choices:** library multi-targets `net8.0` and `net462` (net462 added for Obfuscar compatibility). Tests that exercise `PersistedAssemblyBuilder` require `net9.0` and live under `AssemblyTools/tests/LeXtudio.Metadata.Mutable.Tests`.
 
 **Project Structure**
 
@@ -39,6 +39,7 @@
 **Known Issues & Next Steps**
 
 - There are numerous nullability and SYSLIB warnings inherited from the moved code; triage and fix in follow-up PRs.
+ - The project now multi-targets `net462` to support legacy consumers (Obfuscar). Conditional package references were added for the legacy TFM; further package/version alignment may be needed when packaging or publishing.
 - Decide whether to provide `Obfuscar.*` → `LeXtudio.Metadata.*` compatibility wrappers or convert consumers to the new namespaces. I can add type-forwards or a small wrapper assembly if you want.
 - Add documentation examples showing how to reference and call into `MutableAssemblyReader`/`MutableAssemblyWriter` from a consumer project.
 

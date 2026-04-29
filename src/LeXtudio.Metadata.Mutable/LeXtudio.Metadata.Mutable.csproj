@@ -1,15 +1,43 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks>net8.0;net462</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <RootNamespace>LeXtudio.Metadata.Mutable</RootNamespace>
     <AssemblyName>LeXtudio.Metadata.Mutable</AssemblyName>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- NuGet packaging metadata to enable `dotnet pack` -->
+  <PropertyGroup>
+    <PackageId>LeXtudio.Metadata.Mutable</PackageId>
+    <Version>0.9.0</Version>
+    <Authors>LeXtudio</Authors>
+    <Company>LeXtudio</Company>
+    <Description>Mutable metadata and IL reader/writer library built on System.Reflection.Metadata.</Description>
+    <PackageTags>metadata;il;reflection;assembly;pe;mutable</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
   <ItemGroup>
+    <!-- include repository README and LICENSE in the nupkg root so NuGet/Gallery can display them -->
+    <None Include="../../README.md" Pack="true" PackagePath="" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
     <PackageReference Include="System.Reflection.Metadata" Version="7.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net462'">
+    <PackageReference Include="System.Reflection.Metadata" Version="7.0.0">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="2.2.0">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>
