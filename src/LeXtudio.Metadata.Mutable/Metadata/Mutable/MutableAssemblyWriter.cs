@@ -1375,6 +1375,13 @@ namespace LeXtudio.Metadata.Mutable
                 return;
             }
 
+            if (type is MutableArrayType arrayType)
+            {
+                builder.WriteByte(0x1d); // ELEMENT_TYPE_SZARRAY
+                EncodeCustomAttributeFieldOrPropType(builder, new MutableCustomAttributeArgument(arrayType.ElementType, null));
+                return;
+            }
+
             if (type?.Resolve() is MutableTypeDefinition enumDef && enumDef.IsEnum)
             {
                 builder.WriteByte(0x55); // ELEMENT_TYPE_ENUM

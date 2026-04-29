@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
@@ -1545,7 +1546,9 @@ namespace LeXtudio.Metadata.Mutable
 
         private static MutableCustomAttributeArgument ConvertTypedArgument(CustomAttributeTypedArgument<MutableTypeReference> arg)
         {
-            return new MutableCustomAttributeArgument(arg.Type, ConvertTypedValue(arg.Value));
+            var value = ConvertTypedValue(arg.Value);
+            var type = arg.Type ?? InferCustomAttributeArrayType(value);
+            return new MutableCustomAttributeArgument(type, value);
         }
 
         private static MutableCustomAttributeArgument ConvertTypedArgument(object arg)
@@ -1554,7 +1557,19 @@ namespace LeXtudio.Metadata.Mutable
                 return ConvertTypedArgument(typed);
 
             if (arg is CustomAttributeTypedArgument<object> typedObj)
-                return new MutableCustomAttributeArgument(typedObj.Type as MutableTypeReference, ConvertTypedValue(typedObj.Value));
+            {
+                var value = ConvertTypedValue(typedObj.Value);
+                var type = typedObj.Type as MutableTypeReference ?? InferCustomAttributeArrayType(value);
+                return new MutableCustomAttributeArgument(type, value);
+            }
+
+            var convertedArg = ConvertTypedValue(arg);
+            if (!ReferenceEquals(convertedArg, arg))
+            {
+                return new MutableCustomAttributeArgument(
+                    InferCustomAttributeArrayType(convertedArg),
+                    convertedArg);
+            }
 
             if (arg != null)
             {
@@ -1565,7 +1580,10 @@ namespace LeXtudio.Metadata.Mutable
                 {
                     var typeValue = typeProp.GetValue(arg) as MutableTypeReference;
                     var value = valueProp.GetValue(arg);
-                    return new MutableCustomAttributeArgument(typeValue, ConvertTypedValue(value));
+                    var convertedValue = ConvertTypedValue(value);
+                    return new MutableCustomAttributeArgument(
+                        typeValue ?? InferCustomAttributeArrayType(convertedValue),
+                        convertedValue);
                 }
             }
 
@@ -1594,7 +1612,43 @@ namespace LeXtudio.Metadata.Mutable
                 return list;
             }
 
+            if (value != null &&
+                value.GetType().FullName?.StartsWith("System.Collections.Immutable.ImmutableArray`1", StringComparison.Ordinal) == true)
+            {
+                var lengthProperty = value.GetType().GetProperty("Length");
+                var itemProperty = value.GetType().GetProperty("Item");
+                if (lengthProperty?.GetValue(value) is not int length || itemProperty == null)
+                    return value;
+
+                var list = new List<MutableCustomAttributeArgument>();
+                for (var i = 0; i < length; i++)
+                {
+                    var item = itemProperty.GetValue(value, new object[] { i });
+                    list.Add(ConvertTypedArgument(item));
+                }
+
+                return list;
+            }
+
             return value;
+        }
+
+        private static MutableTypeReference InferCustomAttributeArrayType(object value)
+        {
+            if (value is not IList<MutableCustomAttributeArgument> list)
+                return null;
+
+            MutableTypeReference elementType = null;
+            foreach (var item in list)
+            {
+                if (item?.Type == null)
+                    continue;
+
+                elementType = item.Type;
+                break;
+            }
+
+            return elementType == null ? null : new MutableArrayType(elementType);
         }
 
         private sealed class MutableAttributeTypeProvider : ICustomAttributeTypeProvider<MutableTypeReference>

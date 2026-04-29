@@ -434,6 +434,41 @@ public class MutableAssemblyWriterRoundTripTests
         }
     }
 
+    [Fact]
+    public void RoundTrip_CustomAttributeNamedTypeArrayValue_RemainsReflectable()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_custom_attr_type_array_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var asmPath = Path.Combine(tempDir, "CustomAttributeTypeArrayRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "CustomAttributeTypeArrayRoundTrip_rw.dll");
+
+        try
+        {
+            EmitCustomAttributeNamedTypeArrayValueAssembly(asmPath);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            var ctx = new AssemblyLoadContext("CustomAttributeTypeArrayRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            var loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            var targetType = loaded.GetType("RoundTripTest.Target", throwOnError: true)!;
+            var attribute = targetType.GetCustomAttributes(inherit: false)
+                .Single(a => a.GetType().Name == "TypeArrayMetadataAttribute");
+            var overrides = Assert.IsType<Type[]>(attribute.GetType().GetProperty("OverrideExtensions")!.GetValue(attribute));
+
+            Assert.Equal(new[] { "System.String", "System.Int32" }, overrides.Select(t => t.FullName).ToArray());
+            ctx.Unload();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
     private static void EmitArgumentRoundTripAssembly(string outputPath)
     {
         var asmName = new AssemblyName("ArgumentRoundTrip");
@@ -499,6 +534,75 @@ public class MutableAssemblyWriterRoundTripTests
             "RoundTripTest.Target",
             TypeAttributes.Public | TypeAttributes.Class);
         targetBuilder.SetCustomAttribute(new CustomAttributeBuilder(constructor, new object[] { externalType }));
+        targetBuilder.CreateType();
+
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitCustomAttributeNamedTypeArrayValueAssembly(string outputPath)
+    {
+        var asmName = new AssemblyName("CustomAttributeTypeArrayRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("CustomAttributeTypeArrayRoundTrip");
+
+        var attributeBuilder = modBuilder.DefineType(
+            "RoundTripTest.TypeArrayMetadataAttribute",
+            TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.Sealed,
+            typeof(Attribute));
+        var constructor = attributeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            Type.EmptyTypes);
+        var il = constructor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(Attribute).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            Type.EmptyTypes,
+            modifiers: null)!);
+        il.Emit(OpCodes.Ret);
+
+        var backingField = attributeBuilder.DefineField(
+            "_overrideExtensions",
+            typeof(Type[]),
+            FieldAttributes.Private);
+        var property = attributeBuilder.DefineProperty(
+            "OverrideExtensions",
+            PropertyAttributes.None,
+            typeof(Type[]),
+            Type.EmptyTypes);
+        var getter = attributeBuilder.DefineMethod(
+            "get_OverrideExtensions",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
+            typeof(Type[]),
+            Type.EmptyTypes);
+        il = getter.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, backingField);
+        il.Emit(OpCodes.Ret);
+        var setter = attributeBuilder.DefineMethod(
+            "set_OverrideExtensions",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
+            null,
+            new[] { typeof(Type[]) });
+        il = setter.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, backingField);
+        il.Emit(OpCodes.Ret);
+        property.SetGetMethod(getter);
+        property.SetSetMethod(setter);
+
+        attributeBuilder.CreateType();
+
+        var targetBuilder = modBuilder.DefineType(
+            "RoundTripTest.Target",
+            TypeAttributes.Public | TypeAttributes.Class);
+        targetBuilder.SetCustomAttribute(new CustomAttributeBuilder(
+            constructor,
+            Array.Empty<object>(),
+            new[] { property },
+            new object[] { new[] { typeof(string), typeof(int) } }));
         targetBuilder.CreateType();
 
         asmBuilder.Save(outputPath);
