@@ -2153,6 +2153,45 @@ namespace LeXtudio.Metadata.Mutable
             if (field is MutableFieldDefinition fieldDef && _fieldDefHandles.TryGetValue(fieldDef, out var defHandle))
                 return defHandle;
 
+            // Narrow normalization for generic-instance member refs: if this field ref
+            // points to a field defined in the current module, prefer FieldDef token
+            // instead of emitting a stale MemberRef name.
+            if (field.DeclaringType is MutableGenericInstanceType genericDeclaringType && genericDeclaringType.ElementType != null)
+            {
+                var declaringTypeDef = _assembly.MainModule.GetType(genericDeclaringType.ElementType.FullName);
+                if (declaringTypeDef != null)
+                {
+                    MutableFieldDefinition uniqueByType = null;
+                    foreach (var candidate in declaringTypeDef.Fields)
+                    {
+                        if (!AreEquivalentTypes(candidate.FieldType, field.FieldType))
+                            continue;
+
+                        if (string.Equals(candidate.Name, field.Name, StringComparison.Ordinal) &&
+                            _fieldDefHandles.TryGetValue(candidate, out var resolvedHandle))
+                        {
+                            return resolvedHandle;
+                        }
+
+                        if (uniqueByType == null)
+                        {
+                            uniqueByType = candidate;
+                        }
+                        else
+                        {
+                            // Ambiguous signature, do not force normalization.
+                            uniqueByType = null;
+                            break;
+                        }
+                    }
+
+                    if (uniqueByType != null && _fieldDefHandles.TryGetValue(uniqueByType, out var uniqueHandle))
+                    {
+                        return uniqueHandle;
+                    }
+                }
+            }
+
             if (_fieldRefHandles.TryGetValue(field, out var existing))
                 return existing;
 
