@@ -653,9 +653,18 @@ namespace LeXtudio.Metadata.Mutable
                 
                 for (int i = 0; i < locals.Length; i++)
                 {
-                    var variable = new MutableVariableDefinition(locals[i])
+                    var localType = locals[i];
+                    var isPinned = false;
+                    if (localType is MutablePinnedType pinnedType)
                     {
-                        Index = i
+                        localType = pinnedType.ElementType;
+                        isPinned = true;
+                    }
+
+                    var variable = new MutableVariableDefinition(localType)
+                    {
+                        Index = i,
+                        IsPinned = isPinned
                     };
                     method.Body.Variables.Add(variable);
                 }
@@ -1980,7 +1989,7 @@ namespace LeXtudio.Metadata.Mutable
 
         public MutableTypeReference GetPinnedType(MutableTypeReference elementType)
         {
-            return elementType;
+            return new MutablePinnedType(elementType);
         }
 
         private MutableTypeReference CreateFromTypeDefinition(TypeDefinitionHandle handle, bool isValueType)

@@ -554,7 +554,15 @@ namespace LeXtudio.Metadata.Mutable
                 var localsBuilder = encoder.LocalVariableSignature(body.Variables.Count);
                 foreach (var variable in body.Variables)
                 {
-                    EncodeTypeToBuilder(localsBuilder.AddVariable().Type(), variable.VariableType);
+                    var variableType = variable.VariableType;
+                    var isPinned = variable.IsPinned;
+                    if (variableType is MutablePinnedType pinnedType)
+                    {
+                        variableType = pinnedType.ElementType;
+                        isPinned = true;
+                    }
+
+                    EncodeTypeToBuilder(localsBuilder.AddVariable().Type(isPinned: isPinned), variableType);
                 }
                 
                 localSig = _metadata.AddStandaloneSignature(_metadata.GetOrAddBlob(localsEncoder));
@@ -1591,6 +1599,13 @@ namespace LeXtudio.Metadata.Mutable
                 EncodeModifiedType(encoder, modifiedType);
                 return;
             }
+
+            if (type is MutablePinnedType pinnedType)
+            {
+                encoder.Builder.WriteByte((byte)SignatureTypeCode.Pinned);
+                EncodeTypeToBuilder(encoder, pinnedType.ElementType);
+                return;
+            }
             
             if (type is MutableGenericParameter gp)
             {
@@ -2049,6 +2064,9 @@ namespace LeXtudio.Metadata.Mutable
                        AreEquivalentTypes(leftModified.Modifier, rightModified.Modifier) &&
                        AreEquivalentTypes(leftModified.ElementType, rightModified.ElementType);
             }
+
+            if (left is MutablePinnedType leftPinned && right is MutablePinnedType rightPinned)
+                return AreEquivalentTypes(leftPinned.ElementType, rightPinned.ElementType);
 
             return string.Equals(left.FullName, right.FullName, StringComparison.Ordinal);
         }

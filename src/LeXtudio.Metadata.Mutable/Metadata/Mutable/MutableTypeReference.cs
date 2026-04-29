@@ -347,6 +347,40 @@ namespace LeXtudio.Metadata.Mutable
     }
 
     /// <summary>
+    /// Represents a pinned local variable type.
+    /// </summary>
+    public class MutablePinnedType : MutableTypeReference
+    {
+        /// <summary>
+        /// Creates a new pinned type wrapper.
+        /// </summary>
+        public MutablePinnedType(MutableTypeReference elementType)
+            : base(elementType.Namespace, elementType.Name, elementType.Module)
+        {
+            ElementType = elementType;
+            IsValueType = elementType.IsValueType;
+        }
+
+        /// <summary>
+        /// The underlying unpinned type.
+        /// </summary>
+        public MutableTypeReference ElementType { get; }
+
+        /// <inheritdoc/>
+        public override string FullName
+        {
+            get
+            {
+                if (_cachedFullName != null)
+                    return _cachedFullName;
+
+                _cachedFullName = ElementType?.FullName ?? Name;
+                return _cachedFullName;
+            }
+        }
+    }
+
+    /// <summary>
     /// Represents a type with a required or optional custom modifier (modreq/modopt).
     /// This is used for init-only setters (modreq(IsExternalInit)) and other modifier scenarios.
     /// </summary>

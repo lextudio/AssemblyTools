@@ -220,6 +220,70 @@ public class MutableAssemblyWriterRoundTripTests
         }
     }
 
+    [Fact]
+    public void RoundTrip_PinnedLocal_PreservesLocalSignature()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_pinned_local_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var asmPath = Path.Combine(tempDir, "PinnedLocalRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "PinnedLocalRoundTrip_rw.dll");
+
+        try
+        {
+            EmitPinnedLocalAssembly(asmPath);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+            var method = assembly.MainModule.Types
+                .Single(t => t.FullName == "RoundTripTest.PinnedLocal")
+                .Methods
+                .Single(m => m.Name == "PinReference");
+            var pinnedLocal = method.Body!.Variables.Single(v => v.Index == 1);
+            Assert.True(pinnedLocal.IsPinned);
+            Assert.IsType<MutableByReferenceType>(pinnedLocal.VariableType);
+
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            var rewritten = reader.Read(rewrittenPath, new MutableReaderParameters { ReadMethodBodies = true });
+            method = rewritten.MainModule.Types
+                .Single(t => t.FullName == "RoundTripTest.PinnedLocal")
+                .Methods
+                .Single(m => m.Name == "PinReference");
+            pinnedLocal = method.Body!.Variables.Single(v => v.Index == 1);
+            Assert.True(pinnedLocal.IsPinned);
+            Assert.IsType<MutableByReferenceType>(pinnedLocal.VariableType);
+
+            var ctx = new AssemblyLoadContext("PinnedLocalRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            Assembly loaded;
+            try
+            {
+                loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            }
+            catch (Exception ex)
+            {
+                Assert.Fail($"Failed to load round-tripped assembly: {ex}");
+                return;
+            }
+
+            var type = loaded.GetType("RoundTripTest.PinnedLocal");
+            Assert.NotNull(type);
+            method = null;
+            var reflectionMethod = type!.GetMethod("PinReference", BindingFlags.Public | BindingFlags.Static);
+            Assert.NotNull(reflectionMethod);
+            var args = new object[] { 42 };
+            Assert.Equal(42, reflectionMethod!.Invoke(null, args));
+
+            ctx.Unload();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
     private static void EmitArgumentRoundTripAssembly(string outputPath)
     {
         var asmName = new AssemblyName("ArgumentRoundTrip");
@@ -403,6 +467,38 @@ public class MutableAssemblyWriterRoundTripTests
 
         enumeratorBuilder.CreateType();
         listBuilder.CreateType();
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitPinnedLocalAssembly(string outputPath)
+    {
+        var asmName = new AssemblyName("PinnedLocalRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("PinnedLocalRoundTrip");
+        var typeBuilder = modBuilder.DefineType("RoundTripTest.PinnedLocal",
+            TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.Sealed | TypeAttributes.Abstract);
+
+        var methodBuilder = typeBuilder.DefineMethod("PinReference",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(int),
+            new[] { typeof(int).MakeByRefType() });
+
+        var il = methodBuilder.GetILGenerator();
+        var pointerLocal = il.DeclareLocal(typeof(int).MakePointerType());
+        var pinnedLocal = il.DeclareLocal(typeof(int).MakeByRefType(), pinned: true);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, pinnedLocal);
+        il.Emit(OpCodes.Ldloc, pinnedLocal);
+        il.Emit(OpCodes.Conv_U);
+        il.Emit(OpCodes.Stloc, pointerLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Conv_U);
+        il.Emit(OpCodes.Stloc, pinnedLocal);
+        il.Emit(OpCodes.Ldc_I4, 42);
+        il.Emit(OpCodes.Ret);
+
+        typeBuilder.CreateType();
         asmBuilder.Save(outputPath);
     }
 }
