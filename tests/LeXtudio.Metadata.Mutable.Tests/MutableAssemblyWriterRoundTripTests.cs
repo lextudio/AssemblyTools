@@ -493,7 +493,7 @@ public class MutableAssemblyWriterRoundTripTests
             var targetType = loaded.GetType("RoundTripTest.Target", throwOnError: true)!;
             var attribute = targetType.GetCustomAttributes(inherit: false)
                 .Single(a => a.GetType().Name == "NamedTypeMetadataAttribute");
-            var overrideType = Assert.IsType<Type>(attribute.GetType().GetProperty("OverrideExtension")!.GetValue(attribute));
+            var overrideType = Assert.IsAssignableFrom<Type>(attribute.GetType().GetProperty("OverrideExtension")!.GetValue(attribute));
 
             Assert.Equal(typeof(string).FullName, overrideType.FullName);
             ctx.Unload();

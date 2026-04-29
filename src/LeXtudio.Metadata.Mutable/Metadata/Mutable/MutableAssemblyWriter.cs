@@ -1244,6 +1244,12 @@ namespace LeXtudio.Metadata.Mutable
         {
             if (arg?.Type == null)
             {
+                if (arg?.Value is MutableTypeReference inferredTypeWithoutExplicitType)
+                {
+                    WriteSerializedString(builder, GetCustomAttributeTypeName(inferredTypeWithoutExplicitType));
+                    return;
+                }
+
                 if (arg?.Value is string stringValue)
                 {
                     WriteSerializedString(builder, stringValue);
@@ -1273,6 +1279,12 @@ namespace LeXtudio.Metadata.Mutable
             {
                 var typeRef = arg.Value as MutableTypeReference;
                 WriteSerializedString(builder, GetCustomAttributeTypeName(typeRef));
+                return;
+            }
+
+            if (arg.Value is MutableTypeReference inferredTypeValue)
+            {
+                WriteSerializedString(builder, GetCustomAttributeTypeName(inferredTypeValue));
                 return;
             }
 
@@ -1362,6 +1374,12 @@ namespace LeXtudio.Metadata.Mutable
             var type = argument?.Type;
             if (type == null)
             {
+                if (argument?.Value is MutableTypeReference)
+                {
+                    builder.WriteByte(0x50); // ELEMENT_TYPE_TYPE
+                    return;
+                }
+
                 if (argument?.Value is string)
                 {
                     builder.WriteByte(0x0e);
@@ -1379,6 +1397,12 @@ namespace LeXtudio.Metadata.Mutable
             {
                 builder.WriteByte(0x1d); // ELEMENT_TYPE_SZARRAY
                 EncodeCustomAttributeFieldOrPropType(builder, new MutableCustomAttributeArgument(arrayType.ElementType, null));
+                return;
+            }
+
+            if (argument?.Value is MutableTypeReference)
+            {
+                builder.WriteByte(0x50); // ELEMENT_TYPE_TYPE
                 return;
             }
 
