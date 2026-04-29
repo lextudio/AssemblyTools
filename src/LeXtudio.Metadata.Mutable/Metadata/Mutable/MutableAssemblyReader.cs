@@ -1083,7 +1083,9 @@ namespace LeXtudio.Metadata.Mutable
             else
             {
                 var fieldType = memberRef.DecodeFieldSignature(GetTypeProvider(), null);
-                var fieldDefinition = ResolveFieldDefinitionReference(name, declaringType);
+                var fieldDefinition = declaringType is MutableGenericInstanceType
+                    ? null
+                    : ResolveFieldDefinitionReference(name, declaringType);
                 result = fieldDefinition ?? new MutableFieldReference(name, fieldType, declaringType);
             }
 

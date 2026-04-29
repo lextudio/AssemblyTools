@@ -113,6 +113,59 @@ public class MutableAssemblyWriterRoundTripTests
         }
     }
 
+    [Fact]
+    public void RoundTrip_GenericInstanceFieldAccess_PreservesMemberReference()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_generic_field_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var asmPath = Path.Combine(tempDir, "GenericFieldRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "GenericFieldRoundTrip_rw.dll");
+
+        try
+        {
+            EmitGenericInstanceFieldAssembly(asmPath);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+
+            var useBox = assembly.MainModule.Types.Single(t => t.FullName == "RoundTripTest.UseBox");
+            var readValue = useBox.Methods.Single(m => m.Name == "ReadValue");
+            var ldfld = readValue.Body!.Instructions.Single(i => i.OpCode.Name == "ldfld");
+            var fieldRef = Assert.IsType<MutableFieldReference>(ldfld.Operand);
+            Assert.False(fieldRef is MutableFieldDefinition, "Generic instance field access must remain a field reference, not collapse to a field definition.");
+            Assert.IsType<MutableGenericInstanceType>(fieldRef.DeclaringType);
+
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            var ctx = new AssemblyLoadContext("GenericFieldRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            Assembly loaded;
+            try
+            {
+                loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            }
+            catch (Exception ex)
+            {
+                Assert.Fail($"Failed to load round-tripped assembly: {ex}");
+                return;
+            }
+
+            var type = loaded.GetType("RoundTripTest.UseBox");
+            Assert.NotNull(type);
+            var method = type!.GetMethod("ReadValue", BindingFlags.Public | BindingFlags.Static);
+            Assert.NotNull(method);
+            Assert.Equal(42, method!.Invoke(null, null));
+
+            ctx.Unload();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
     private static void EmitArgumentRoundTripAssembly(string outputPath)
     {
         var asmName = new AssemblyName("ArgumentRoundTrip");
@@ -203,6 +256,49 @@ public class MutableAssemblyWriterRoundTripTests
         il.Emit(OpCodes.Ret);
 
         typeBuilder.CreateType();
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitGenericInstanceFieldAssembly(string outputPath)
+    {
+        var asmName = new AssemblyName("GenericFieldRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("GenericFieldRoundTrip");
+
+        var boxBuilder = modBuilder.DefineType("RoundTripTest.Box`1",
+            TypeAttributes.Public | TypeAttributes.Class);
+        var typeParameter = boxBuilder.DefineGenericParameters("T")[0];
+        var valueField = boxBuilder.DefineField("Value", typeParameter, FieldAttributes.Public);
+
+        var boxCtor = boxBuilder.DefineConstructor(MethodAttributes.Public, CallingConventions.HasThis, Type.EmptyTypes);
+        var il = boxCtor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ret);
+
+        var useBoxBuilder = modBuilder.DefineType("RoundTripTest.UseBox",
+            TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.Sealed | TypeAttributes.Abstract);
+        var readValue = useBoxBuilder.DefineMethod("ReadValue",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(int),
+            Type.EmptyTypes);
+
+        var boxOfInt = boxBuilder.MakeGenericType(typeof(int));
+        var valueOnBoxOfInt = TypeBuilder.GetField(boxOfInt, valueField);
+        var boxCtorOnBoxOfInt = TypeBuilder.GetConstructor(boxOfInt, boxCtor);
+        il = readValue.GetILGenerator();
+        var boxLocal = il.DeclareLocal(boxOfInt);
+        il.Emit(OpCodes.Newobj, boxCtorOnBoxOfInt);
+        il.Emit(OpCodes.Stloc, boxLocal);
+        il.Emit(OpCodes.Ldloc, boxLocal);
+        il.Emit(OpCodes.Ldc_I4, 42);
+        il.Emit(OpCodes.Stfld, valueOnBoxOfInt);
+        il.Emit(OpCodes.Ldloc, boxLocal);
+        il.Emit(OpCodes.Ldfld, valueOnBoxOfInt);
+        il.Emit(OpCodes.Ret);
+
+        boxBuilder.CreateType();
+        useBoxBuilder.CreateType();
         asmBuilder.Save(outputPath);
     }
 }
