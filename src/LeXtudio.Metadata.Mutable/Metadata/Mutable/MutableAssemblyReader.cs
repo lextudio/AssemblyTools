@@ -1806,7 +1806,7 @@ namespace LeXtudio.Metadata.Mutable
                 return null;
 
             var typeName = name;
-            var commaIndex = typeName.IndexOf(',');
+            var commaIndex = IndexOfTopLevelComma(typeName);
             var assemblyName = commaIndex >= 0 ? typeName.Substring(commaIndex + 1).Trim() : null;
             if (commaIndex >= 0)
                 typeName = typeName.Substring(0, commaIndex);
@@ -1829,9 +1829,9 @@ namespace LeXtudio.Metadata.Mutable
                 return element == null ? null : new MutablePointerType(element);
             }
 
-            var nestedParts = typeName.Split(new[] { '+', '/' }, StringSplitOptions.None);
+            var nestedParts = SplitNestedTypeName(typeName);
             var rootPart = nestedParts[0];
-            var lastDot = rootPart.LastIndexOf('.');
+            var lastDot = LastIndexOfNamespaceSeparator(rootPart);
             var ns = lastDot >= 0 ? rootPart.Substring(0, lastDot) : string.Empty;
             var rootName = lastDot >= 0 ? rootPart.Substring(lastDot + 1) : rootPart;
 
@@ -1851,6 +1851,66 @@ namespace LeXtudio.Metadata.Mutable
             }
 
             return current;
+        }
+
+        private static int IndexOfTopLevelComma(string value)
+        {
+            var bracketDepth = 0;
+            for (var i = 0; i < value.Length; i++)
+            {
+                switch (value[i])
+                {
+                    case '[':
+                        bracketDepth++;
+                        break;
+                    case ']':
+                        if (bracketDepth > 0)
+                            bracketDepth--;
+                        break;
+                    case ',' when bracketDepth == 0:
+                        return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static string[] SplitNestedTypeName(string typeName)
+        {
+            var parts = new List<string>();
+            var bracketDepth = 0;
+            var start = 0;
+            for (var i = 0; i < typeName.Length; i++)
+            {
+                switch (typeName[i])
+                {
+                    case '[':
+                        bracketDepth++;
+                        break;
+                    case ']':
+                        if (bracketDepth > 0)
+                            bracketDepth--;
+                        break;
+                    case '+':
+                    case '/':
+                        if (bracketDepth == 0)
+                        {
+                            parts.Add(typeName.Substring(start, i - start));
+                            start = i + 1;
+                        }
+                        break;
+                }
+            }
+
+            parts.Add(typeName.Substring(start));
+            return parts.ToArray();
+        }
+
+        private static int LastIndexOfNamespaceSeparator(string typeName)
+        {
+            var genericStart = typeName.IndexOf('[');
+            var searchLength = genericStart >= 0 ? genericStart : typeName.Length;
+            return typeName.LastIndexOf('.', searchLength - 1, searchLength);
         }
 
         private static MutableAssemblyNameReference CreateAssemblyNameReference(string assemblyName)

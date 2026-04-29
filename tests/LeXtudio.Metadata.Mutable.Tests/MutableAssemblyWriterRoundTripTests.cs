@@ -504,6 +504,46 @@ public class MutableAssemblyWriterRoundTripTests
         }
     }
 
+    [Fact]
+    public void RoundTrip_CustomAttributeGenericTypeValue_RemainsReflectable()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_custom_attr_generic_type_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var asmPath = Path.Combine(tempDir, "CustomAttributeGenericTypeRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "CustomAttributeGenericTypeRoundTrip_rw.dll");
+
+        try
+        {
+            EmitCustomAttributeGenericTypeValueAssembly(asmPath);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            var ctx = new AssemblyLoadContext("CustomAttributeGenericTypeRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            var loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            var targetType = loaded.GetType("RoundTripTest.Target", throwOnError: true)!;
+            var attribute = targetType.GetCustomAttributes(inherit: false)
+                .Single(a => a.GetType().Name == "GenericTypeMetadataAttribute");
+            var extensionServerType = Assert.IsAssignableFrom<Type>(
+                attribute.GetType().GetProperty("ExtensionServerType")!.GetValue(attribute));
+
+            Assert.True(extensionServerType.IsConstructedGenericType);
+            Assert.Equal("RoundTripTest.LogicalOrServer`2", extensionServerType.GetGenericTypeDefinition().FullName);
+            Assert.Equal(
+                new[] { "RoundTripTest.PrimaryServer", "RoundTripTest.ParentServer" },
+                extensionServerType.GetGenericArguments().Select(t => t.FullName).ToArray());
+            ctx.Unload();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
     private static void EmitArgumentRoundTripAssembly(string outputPath)
     {
         var asmName = new AssemblyName("ArgumentRoundTrip");
@@ -707,6 +747,75 @@ public class MutableAssemblyWriterRoundTripTests
             Array.Empty<object>(),
             new[] { property },
             new object[] { typeof(string) }));
+        targetBuilder.CreateType();
+
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitCustomAttributeGenericTypeValueAssembly(string outputPath)
+    {
+        var asmName = new AssemblyName("CustomAttributeGenericTypeRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("CustomAttributeGenericTypeRoundTrip");
+
+        var primaryServer = modBuilder.DefineType(
+            "RoundTripTest.PrimaryServer",
+            TypeAttributes.Public | TypeAttributes.Class).CreateType();
+        var parentServer = modBuilder.DefineType(
+            "RoundTripTest.ParentServer",
+            TypeAttributes.Public | TypeAttributes.Class).CreateType();
+        var logicalOrServerBuilder = modBuilder.DefineType(
+            "RoundTripTest.LogicalOrServer`2",
+            TypeAttributes.Public | TypeAttributes.Class);
+        logicalOrServerBuilder.DefineGenericParameters("TPrimary", "TParent");
+        var logicalOrServer = logicalOrServerBuilder.CreateType();
+
+        var attributeBuilder = modBuilder.DefineType(
+            "RoundTripTest.GenericTypeMetadataAttribute",
+            TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.Sealed,
+            typeof(Attribute));
+        var backingField = attributeBuilder.DefineField(
+            "_extensionServerType",
+            typeof(Type),
+            FieldAttributes.Private);
+        var constructor = attributeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            new[] { typeof(Type) });
+        var il = constructor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(Attribute).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            Type.EmptyTypes,
+            modifiers: null)!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, backingField);
+        il.Emit(OpCodes.Ret);
+        var property = attributeBuilder.DefineProperty(
+            "ExtensionServerType",
+            PropertyAttributes.None,
+            typeof(Type),
+            Type.EmptyTypes);
+        var getter = attributeBuilder.DefineMethod(
+            "get_ExtensionServerType",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
+            typeof(Type),
+            Type.EmptyTypes);
+        il = getter.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, backingField);
+        il.Emit(OpCodes.Ret);
+        property.SetGetMethod(getter);
+        attributeBuilder.CreateType();
+
+        var targetBuilder = modBuilder.DefineType(
+            "RoundTripTest.Target",
+            TypeAttributes.Public | TypeAttributes.Class);
+        targetBuilder.SetCustomAttribute(new CustomAttributeBuilder(
+            constructor,
+            new object[] { logicalOrServer.MakeGenericType(primaryServer, parentServer) }));
         targetBuilder.CreateType();
 
         asmBuilder.Save(outputPath);
