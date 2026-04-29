@@ -166,6 +166,60 @@ public class MutableAssemblyWriterRoundTripTests
         }
     }
 
+    [Fact]
+    public void RoundTrip_NestedGenericInstanceConstructor_PreservesMemberReference()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_nested_generic_ctor_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var asmPath = Path.Combine(tempDir, "NestedGenericConstructorRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "NestedGenericConstructorRoundTrip_rw.dll");
+
+        try
+        {
+            EmitNestedGenericConstructorAssembly(asmPath);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+
+            var list = assembly.MainModule.Types.Single(t => t.FullName == "RoundTripTest.SingleItemList`1");
+            var createEnumerator = list.Methods.Single(m => m.Name == "CreateEnumerator");
+            var newobj = createEnumerator.Body!.Instructions.Single(i => i.OpCode.Name == "newobj");
+            var ctorRef = Assert.IsType<MutableMethodReference>(newobj.Operand);
+            Assert.False(ctorRef is MutableMethodDefinition, "Nested generic constructor access must remain a method reference, not collapse to a method definition.");
+            Assert.IsType<MutableGenericInstanceType>(ctorRef.DeclaringType);
+
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            var ctx = new AssemblyLoadContext("NestedGenericConstructorRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            Assembly loaded;
+            try
+            {
+                loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            }
+            catch (Exception ex)
+            {
+                Assert.Fail($"Failed to load round-tripped assembly: {ex}");
+                return;
+            }
+
+            var type = loaded.GetType("RoundTripTest.SingleItemList`1")!.MakeGenericType(typeof(int));
+            var instance = Activator.CreateInstance(type, 42);
+            var method = type.GetMethod("CreateEnumerator", BindingFlags.Public | BindingFlags.Instance);
+            Assert.NotNull(method);
+            var enumerator = method!.Invoke(instance, null);
+            Assert.NotNull(enumerator);
+
+            ctx.Unload();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
     private static void EmitArgumentRoundTripAssembly(string outputPath)
     {
         var asmName = new AssemblyName("ArgumentRoundTrip");
@@ -299,6 +353,56 @@ public class MutableAssemblyWriterRoundTripTests
 
         boxBuilder.CreateType();
         useBoxBuilder.CreateType();
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitNestedGenericConstructorAssembly(string outputPath)
+    {
+        var asmName = new AssemblyName("NestedGenericConstructorRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("NestedGenericConstructorRoundTrip");
+
+        var listBuilder = modBuilder.DefineType("RoundTripTest.SingleItemList`1",
+            TypeAttributes.Public | TypeAttributes.Class);
+        var listTypeParameter = listBuilder.DefineGenericParameters("T")[0];
+        var itemField = listBuilder.DefineField("_item", listTypeParameter, FieldAttributes.Private | FieldAttributes.InitOnly);
+
+        var ctor = listBuilder.DefineConstructor(MethodAttributes.Public, CallingConventions.HasThis, new[] { listTypeParameter });
+        var il = ctor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, itemField);
+        il.Emit(OpCodes.Ret);
+
+        var enumeratorBuilder = listBuilder.DefineNestedType("Enumerator`1",
+            TypeAttributes.NestedPublic | TypeAttributes.Class);
+        var enumeratorTypeParameter = enumeratorBuilder.DefineGenericParameters("T")[0];
+        var enumeratorItemField = enumeratorBuilder.DefineField("_item", enumeratorTypeParameter, FieldAttributes.Private | FieldAttributes.InitOnly);
+        var enumeratorCtor = enumeratorBuilder.DefineConstructor(MethodAttributes.Public, CallingConventions.HasThis, new[] { enumeratorTypeParameter });
+        il = enumeratorCtor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, enumeratorItemField);
+        il.Emit(OpCodes.Ret);
+
+        var createEnumerator = listBuilder.DefineMethod("CreateEnumerator",
+            MethodAttributes.Public,
+            typeof(object),
+            Type.EmptyTypes);
+        var enumeratorOfT = enumeratorBuilder.MakeGenericType(listTypeParameter);
+        var enumeratorCtorOfT = TypeBuilder.GetConstructor(enumeratorOfT, enumeratorCtor);
+        il = createEnumerator.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, itemField);
+        il.Emit(OpCodes.Newobj, enumeratorCtorOfT);
+        il.Emit(OpCodes.Ret);
+
+        enumeratorBuilder.CreateType();
+        listBuilder.CreateType();
         asmBuilder.Save(outputPath);
     }
 }

@@ -1942,6 +1942,9 @@ namespace LeXtudio.Metadata.Mutable
             if (methodReference == null)
                 return false;
 
+            if (methodReference.DeclaringType is MutableGenericInstanceType)
+                return false;
+
             MutableTypeDefinition declaringTypeDefinition = ResolveDeclaringTypeDefinition(methodReference.DeclaringType);
             if (declaringTypeDefinition == null)
                 return false;
