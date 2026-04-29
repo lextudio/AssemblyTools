@@ -22,9 +22,18 @@ single, well-tested implementation.
 
 ## Getting started
 
-Add a project reference from your consumer project to the library:
+Add the NuGet package from nuget.org (preferred):
 
-`dotnet add <your-project>.csproj reference ../src/LeXtudio.Metadata.Mutable/LeXtudio.Metadata.Mutable.csproj`
+`dotnet add <your-project>.csproj package LeXtudio.Metadata.Mutable`
+
+If you need to test locally before publishing, pack the library and add the
+local folder as a package source:
+
+`dotnet pack src/LeXtudio.Metadata.Mutable/LeXtudio.Metadata.Mutable.csproj -c Release`
+
+`dotnet nuget add source "src\LeXtudio.Metadata.Mutable\bin\Release" -n local-pkgs`
+
+`dotnet add <your-project>.csproj package LeXtudio.Metadata.Mutable --source local-pkgs`
 
 Build the library (example, `net8.0`):
 
@@ -36,8 +45,7 @@ Run the tests:
 
 ## Usage
 
-- Reference the `LeXtudio.Metadata.Mutable` project or package from your
-	consumer. Use the public API surface under the `LeXtudio.Metadata.Mutable`
+- Reference the `LeXtudio.Metadata.Mutable` package. Use the public API surface under the `LeXtudio.Metadata.Mutable`
 	namespace — for example the reader/writer classes (`MutableAssemblyReader`,
 	`MutableAssemblyWriter`), `MutableTypeSystem`, and `PersistedAssemblyBuilder`.
 - Concrete usage examples are available in the test projects; see:
@@ -54,7 +62,7 @@ Design notes and rationale: [docs/design.md](docs/design.md)
 - `net462` (legacy compatibility)
 
 Note: Some tests exercise `net9.0` features and are located under the
-`AssemblyTools/tests` folder.
+`tests` folder.
 
 ## Contributing
 

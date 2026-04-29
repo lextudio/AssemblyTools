@@ -10,7 +10,9 @@
   <!-- NuGet packaging metadata to enable `dotnet pack` -->
   <PropertyGroup>
     <PackageId>LeXtudio.Metadata.Mutable</PackageId>
-    <Version>0.9.0</Version>
+    <!-- prefer GitVersion-provided NuGet version when available, otherwise fall back -->
+    <Version Condition="'$(Version)' == '' and '$(GitVersion_NuGetVersionV2)' != ''">$(GitVersion_NuGetVersionV2)</Version>
+    <Version Condition="'$(Version)' == ''">0.9.0</Version>
     <Authors>LeXtudio</Authors>
     <Company>LeXtudio</Company>
     <Description>Mutable metadata and IL reader/writer library built on System.Reflection.Metadata.</Description>
@@ -38,6 +40,11 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="2.2.0">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+  </ItemGroup>
+
+  <!-- Integrate GitVersion to calculate package version from Git history/tags when available -->
+  <ItemGroup>
+    <PackageReference Include="GitVersion.MsBuild" Version="6.5.1" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>
