@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <!-- Opt-in to the new `dotnet test` experience for projects using the TPM runner -->
+    <TestingPlatformOptions>--no-vstest</TestingPlatformOptions>
+    <!-- Disable the TPM custom Test target so dotnet test uses the new experience by default -->
+    <TestingPlatformDisableCustomTestTarget>true</TestingPlatformDisableCustomTestTarget>
+    <!-- Ensure TPM does not treat the project as a TestingPlatform application for net10+ SDKs -->
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
+  </PropertyGroup>
+</Project>
