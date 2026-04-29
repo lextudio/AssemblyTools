@@ -1547,7 +1547,12 @@ namespace LeXtudio.Metadata.Mutable
         private static MutableCustomAttributeArgument ConvertTypedArgument(CustomAttributeTypedArgument<MutableTypeReference> arg)
         {
             var value = ConvertTypedValue(arg.Value);
-            var type = arg.Type ?? InferCustomAttributeArrayType(value);
+            var type = arg.Type;
+            if (type == null || string.IsNullOrEmpty(type.FullName))
+            {
+                type = InferCustomAttributeArgumentType(value);
+            }
+
             return new MutableCustomAttributeArgument(type, value);
         }
 
@@ -1559,7 +1564,12 @@ namespace LeXtudio.Metadata.Mutable
             if (arg is CustomAttributeTypedArgument<object> typedObj)
             {
                 var value = ConvertTypedValue(typedObj.Value);
-                var type = typedObj.Type as MutableTypeReference ?? InferCustomAttributeArrayType(value);
+                var type = typedObj.Type as MutableTypeReference;
+                if (type == null || string.IsNullOrEmpty(type.FullName))
+                {
+                    type = InferCustomAttributeArgumentType(value);
+                }
+
                 return new MutableCustomAttributeArgument(type, value);
             }
 
@@ -1567,7 +1577,7 @@ namespace LeXtudio.Metadata.Mutable
             if (!ReferenceEquals(convertedArg, arg))
             {
                 return new MutableCustomAttributeArgument(
-                    InferCustomAttributeArrayType(convertedArg),
+                    InferCustomAttributeArgumentType(convertedArg),
                     convertedArg);
             }
 
@@ -1581,9 +1591,12 @@ namespace LeXtudio.Metadata.Mutable
                     var typeValue = typeProp.GetValue(arg) as MutableTypeReference;
                     var value = valueProp.GetValue(arg);
                     var convertedValue = ConvertTypedValue(value);
-                    return new MutableCustomAttributeArgument(
-                        typeValue ?? InferCustomAttributeArrayType(convertedValue),
-                        convertedValue);
+                    if (typeValue == null || string.IsNullOrEmpty(typeValue.FullName))
+                    {
+                        typeValue = InferCustomAttributeArgumentType(convertedValue);
+                    }
+
+                    return new MutableCustomAttributeArgument(typeValue, convertedValue);
                 }
             }
 
@@ -1631,6 +1644,14 @@ namespace LeXtudio.Metadata.Mutable
             }
 
             return value;
+        }
+
+        private static MutableTypeReference InferCustomAttributeArgumentType(object value)
+        {
+            if (value is MutableTypeReference typeReference)
+                return new MutableTypeReference("System", "Type", typeReference.Module);
+
+            return InferCustomAttributeArrayType(value);
         }
 
         private static MutableTypeReference InferCustomAttributeArrayType(object value)
