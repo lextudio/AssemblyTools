@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Runtime.Loader;
 using LeXtudio.Metadata.Mutable;
 using Xunit;
@@ -276,6 +278,44 @@ public class MutableAssemblyWriterRoundTripTests
             var args = new object[] { 42 };
             Assert.Equal(42, reflectionMethod!.Invoke(null, args));
 
+            ctx.Unload();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public void Write_UnsignedAssembly_ClearsStrongNameSignedCorFlag()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_strong_name_flag_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var asmPath = Path.Combine(tempDir, "StrongNameFlagRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "StrongNameFlagRoundTrip_rw.dll");
+
+        try
+        {
+            EmitArgumentRoundTripAssembly(asmPath);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+            assembly.MainModule.Attributes |= MutableModuleAttributes.StrongNameSigned;
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            using var stream = File.OpenRead(rewrittenPath);
+            using var peReader = new PEReader(stream);
+            var corHeader = peReader.PEHeaders.CorHeader;
+            Assert.NotNull(corHeader);
+            Assert.False(corHeader!.Flags.HasFlag(CorFlags.StrongNameSigned));
+            Assert.Equal(0, corHeader.StrongNameSignatureDirectory.Size);
+
+            var ctx = new AssemblyLoadContext("StrongNameFlagRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            var loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            Assert.NotNull(loaded);
             ctx.Unload();
         }
         finally
