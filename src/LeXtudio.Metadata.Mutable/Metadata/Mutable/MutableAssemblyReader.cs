@@ -996,6 +996,13 @@ namespace LeXtudio.Metadata.Mutable
                 }
                 var fieldType = fieldDef.DecodeSignature(GetTypeProvider(), null);
                 var fieldDefinition = ResolveFieldDefinitionReference(name, declaringType);
+                if (fieldDefinition != null &&
+                    TryCreateSelfGenericFieldReference(fieldDefinition, declaringTypeHandle, out var selfGenericFieldReference))
+                {
+                    _fieldDefRefCache[fieldHandle] = selfGenericFieldReference;
+                    return selfGenericFieldReference;
+                }
+
                 var fieldRef = (MutableFieldReference)(fieldDefinition ?? new MutableFieldReference(name, fieldType, declaringType));
                 _fieldDefRefCache[fieldHandle] = fieldRef;
                 return fieldRef;
@@ -1005,6 +1012,42 @@ namespace LeXtudio.Metadata.Mutable
                 return ResolveMemberReference((MemberReferenceHandle)handle) as MutableFieldReference;
             }
             return null;
+        }
+
+        private bool TryCreateSelfGenericFieldReference(
+            MutableFieldDefinition fieldDefinition,
+            EntityHandle declaringTypeHandle,
+            out MutableFieldReference fieldReference)
+        {
+            fieldReference = null;
+            if (!(fieldDefinition?.DeclaringType is MutableTypeDefinition declaringType))
+                return false;
+
+            var genericParameterCount = declaringType.GenericParameters.Count;
+            if (genericParameterCount == 0 && declaringTypeHandle.Kind == HandleKind.TypeDefinition)
+            {
+                genericParameterCount = _metadataReader.GetTypeDefinition((TypeDefinitionHandle)declaringTypeHandle)
+                    .GetGenericParameters()
+                    .Count;
+            }
+
+            if (genericParameterCount == 0)
+                return false;
+
+            var genericDeclaringType = new MutableGenericInstanceType(declaringType, genericParameterCount);
+            for (int i = 0; i < genericParameterCount; i++)
+            {
+                var parameter = i < declaringType.GenericParameters.Count
+                    ? declaringType.GenericParameters[i]
+                    : new MutableGenericParameter("T" + i.ToString(System.Globalization.CultureInfo.InvariantCulture), declaringType)
+                    {
+                        Position = i
+                    };
+                genericDeclaringType.GenericArguments.Add(parameter);
+            }
+
+            fieldReference = new MutableFieldReference(fieldDefinition.Name, fieldDefinition.FieldType, genericDeclaringType);
+            return true;
         }
 
         private MutableTypeReference ResolveTypeToken(int token)

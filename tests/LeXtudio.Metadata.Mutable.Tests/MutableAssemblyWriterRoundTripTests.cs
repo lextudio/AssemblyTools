@@ -170,6 +170,52 @@ public class MutableAssemblyWriterRoundTripTests
     }
 
     [Fact]
+    public void RoundTrip_GenericTypeStaticFieldAccess_RemainsInstantiable()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_generic_static_field_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var asmPath = Path.Combine(tempDir, "GenericStaticFieldRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "GenericStaticFieldRoundTrip_rw.dll");
+
+        try
+        {
+            EmitGenericTypeStaticFieldAssembly(asmPath);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+
+            var sharedInstances = assembly.MainModule.Types.Single(t => t.FullName == "RoundTripTest.SharedInstances`1");
+            var cctor = sharedInstances.Methods.Single(m => m.Name == ".cctor");
+            var staticFieldOperands = cctor.Body!.Instructions
+                .Where(i => i.OpCode.Name == "stsfld" || i.OpCode.Name == "ldsfld")
+                .Select(i => Assert.IsType<MutableFieldReference>(i.Operand))
+                .ToArray();
+            Assert.All(staticFieldOperands, field =>
+                Assert.IsType<MutableGenericInstanceType>(field.DeclaringType));
+
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            var ctx = new AssemblyLoadContext("GenericStaticFieldRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            var loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            var type = loaded.GetType("RoundTripTest.UseSharedInstances", throwOnError: true)!;
+            var method = type.GetMethod("Run", BindingFlags.Public | BindingFlags.Static);
+            Assert.NotNull(method);
+
+            var exception = Record.Exception(() => method!.Invoke(null, null));
+            ctx.Unload();
+
+            Assert.Null(exception);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public void RoundTrip_NestedGenericInstanceConstructor_PreservesMemberReference()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_nested_generic_ctor_roundtrip_" + Guid.NewGuid().ToString("N"));
@@ -656,6 +702,73 @@ public class MutableAssemblyWriterRoundTripTests
             modifiers: null)!);
         il.Emit(OpCodes.Ret);
         attributeBuilder.CreateType();
+
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitGenericTypeStaticFieldAssembly(string outputPath)
+    {
+        var asmName = new AssemblyName("GenericStaticFieldRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("GenericStaticFieldRoundTrip");
+
+        var enumBuilder = modBuilder.DefineEnum(
+            "RoundTripTest.TestEnum",
+            TypeAttributes.Public,
+            typeof(int));
+        enumBuilder.DefineLiteral("One", 1);
+        var enumType = enumBuilder.CreateType();
+
+        var sharedBuilder = modBuilder.DefineType(
+            "RoundTripTest.SharedInstances`1",
+            TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
+        var genericParameter = sharedBuilder.DefineGenericParameters("T")[0];
+        genericParameter.SetGenericParameterAttributes(GenericParameterAttributes.NotNullableValueTypeConstraint);
+
+        var dictionaryType = typeof(Dictionary<,>).MakeGenericType(genericParameter, typeof(object));
+        var field = sharedBuilder.DefineField(
+            "_boxedEnumValues",
+            dictionaryType,
+            FieldAttributes.Private | FieldAttributes.Static);
+
+        var cctor = sharedBuilder.DefineConstructor(
+            MethodAttributes.Private | MethodAttributes.Static | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
+            CallingConventions.Standard,
+            Type.EmptyTypes);
+        var il = cctor.GetILGenerator();
+        il.Emit(OpCodes.Newobj, TypeBuilder.GetConstructor(
+            dictionaryType,
+            typeof(Dictionary<,>).GetConstructor(Type.EmptyTypes)!));
+        il.Emit(OpCodes.Stsfld, field);
+        il.Emit(OpCodes.Ret);
+
+        var hasValue = sharedBuilder.DefineMethod(
+            "HasValue",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(bool),
+            new[] { genericParameter });
+        il = hasValue.GetILGenerator();
+        il.Emit(OpCodes.Ldsfld, field);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, TypeBuilder.GetMethod(
+            dictionaryType,
+            typeof(Dictionary<,>).GetMethod("ContainsKey")!));
+        il.Emit(OpCodes.Ret);
+        var sharedType = sharedBuilder.CreateType();
+
+        var useBuilder = modBuilder.DefineType(
+            "RoundTripTest.UseSharedInstances",
+            TypeAttributes.Public | TypeAttributes.Class);
+        var run = useBuilder.DefineMethod(
+            "Run",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(bool),
+            Type.EmptyTypes);
+        il = run.GetILGenerator();
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Call, TypeBuilder.GetMethod(sharedType.MakeGenericType(enumType), hasValue));
+        il.Emit(OpCodes.Ret);
+        useBuilder.CreateType();
 
         asmBuilder.Save(outputPath);
     }
