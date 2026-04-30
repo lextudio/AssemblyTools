@@ -1319,6 +1319,9 @@ namespace LeXtudio.Metadata.Mutable
                 return;
             }
 
+            if (TryWritePrimitiveValueFromObject(builder, arg.Value))
+                return;
+
             builder.WriteInt32(0);
         }
 

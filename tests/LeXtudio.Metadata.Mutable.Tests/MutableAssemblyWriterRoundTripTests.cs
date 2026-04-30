@@ -435,6 +435,51 @@ public class MutableAssemblyWriterRoundTripTests
     }
 
     [Fact]
+    public void RoundTrip_CustomAttributeExternalEnumConstructorArguments_PreservesValues()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_custom_attr_enum_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var dependencyPath = Path.Combine(tempDir, "CustomAttributeEnumDependency.dll");
+        var asmPath = Path.Combine(tempDir, "CustomAttributeEnumRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "CustomAttributeEnumRoundTrip_rw.dll");
+
+        try
+        {
+            EmitExternalEnumAttributeDependency(dependencyPath);
+            var dependency = AssemblyLoadContext.Default.LoadFromAssemblyPath(dependencyPath);
+            var enumType = dependency.GetType("ExternalNamespace.ThemeLocation", throwOnError: true)!;
+            var attributeType = dependency.GetType("ExternalNamespace.ThemeLikeAttribute", throwOnError: true)!;
+            EmitCustomAttributeExternalEnumAssembly(asmPath, attributeType, enumType);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            var ctx = new AssemblyLoadContext("CustomAttributeEnumRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            ctx.Resolving += (_, name) =>
+                name.Name == "CustomAttributeEnumDependency"
+                    ? ctx.LoadFromAssemblyPath(dependencyPath)
+                    : null;
+
+            var loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            var targetType = loaded.GetType("RoundTripTest.Target", throwOnError: true)!;
+            var attribute = targetType.GetCustomAttributesData()
+                .Single(attr => attr.AttributeType.FullName == "ExternalNamespace.ThemeLikeAttribute");
+
+            Assert.Equal(0, Convert.ToInt32(attribute.ConstructorArguments[0].Value));
+            Assert.Equal(1, Convert.ToInt32(attribute.ConstructorArguments[1].Value));
+            ctx.Unload();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public void RoundTrip_CustomAttributeNamedTypeArrayValue_RemainsReflectable()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_custom_attr_type_array_roundtrip_" + Guid.NewGuid().ToString("N"));
@@ -577,6 +622,58 @@ public class MutableAssemblyWriterRoundTripTests
             TypeAttributes.Public | TypeAttributes.Class);
 
         typeBuilder.CreateType();
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitExternalEnumAttributeDependency(string outputPath)
+    {
+        var asmName = new AssemblyName("CustomAttributeEnumDependency");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("CustomAttributeEnumDependency");
+
+        var enumBuilder = modBuilder.DefineEnum(
+            "ExternalNamespace.ThemeLocation",
+            TypeAttributes.Public,
+            typeof(int));
+        enumBuilder.DefineLiteral("None", 0);
+        enumBuilder.DefineLiteral("SourceAssembly", 1);
+        var enumType = enumBuilder.CreateType();
+
+        var attributeBuilder = modBuilder.DefineType(
+            "ExternalNamespace.ThemeLikeAttribute",
+            TypeAttributes.Public | TypeAttributes.Class | TypeAttributes.Sealed,
+            typeof(Attribute));
+        var constructor = attributeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            new[] { enumType, enumType });
+        var il = constructor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(Attribute).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            Type.EmptyTypes,
+            modifiers: null)!);
+        il.Emit(OpCodes.Ret);
+        attributeBuilder.CreateType();
+
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitCustomAttributeExternalEnumAssembly(string outputPath, Type attributeType, Type enumType)
+    {
+        var asmName = new AssemblyName("CustomAttributeEnumRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("CustomAttributeEnumRoundTrip");
+
+        var targetBuilder = modBuilder.DefineType(
+            "RoundTripTest.Target",
+            TypeAttributes.Public | TypeAttributes.Class);
+        targetBuilder.SetCustomAttribute(new CustomAttributeBuilder(
+            attributeType.GetConstructor(new[] { enumType, enumType })!,
+            new[] { Enum.ToObject(enumType, 0), Enum.ToObject(enumType, 1) }));
+        targetBuilder.CreateType();
+
         asmBuilder.Save(outputPath);
     }
 
