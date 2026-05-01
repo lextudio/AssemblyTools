@@ -20,6 +20,8 @@ single, well-tested implementation.
 	shims are provided in `Support`.
 - Tests demonstrating round-trip behavior are included.
 
+Currently used in both [Obfuscar](https://github.com/obfuscar/obfuscar) and [WXSG](https://github.com/lextudio/wxsg) projects.
+
 ## Getting started
 
 Add the NuGet package from nuget.org (preferred):
@@ -45,7 +47,8 @@ Run the tests:
 
 ## Usage
 
-- Reference the `LeXtudio.Metadata.Mutable` package. Use the public API surface under the `LeXtudio.Metadata.Mutable`
+- Reference the [![NuGet](https://img.shields.io/nuget/v/LeXtudio.Metadata.Mutable.svg?label=LeXtudio.Metadata.Mutable&&style=flat-square)](https://www.nuget.org/packages/LeXtudio.Metadata.Mutable)
+ package. Use the public API surface under the `LeXtudio.Metadata.Mutable`
 	namespace — for example the reader/writer classes (`MutableAssemblyReader`,
 	`MutableAssemblyWriter`), `MutableTypeSystem`, and `PersistedAssemblyBuilder`.
 - Concrete usage examples are available in the test projects; see:
