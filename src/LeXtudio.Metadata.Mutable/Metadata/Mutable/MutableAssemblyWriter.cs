@@ -212,18 +212,11 @@ namespace LeXtudio.Metadata.Mutable
         {
             var module = _assembly.MainModule;
             
-            // Process types in order: non-nested first, then nested
+            // Preserve original TypeDef row order when available so MethodDef/FieldDef
+            // handles remain stable across a read/write round trip.
             _orderedTypes.Clear();
             CollectTypes(module.Types, _orderedTypes);
-
-            // Ensure <Module> type (if present) is first.
-            var moduleIndex = _orderedTypes.FindIndex(t => t.Name == "<Module>" && string.IsNullOrEmpty(t.Namespace));
-            if (moduleIndex > 0)
-            {
-                var moduleType = _orderedTypes[moduleIndex];
-                _orderedTypes.RemoveAt(moduleIndex);
-                _orderedTypes.Insert(0, moduleType);
-            }
+            _orderedTypes.Sort(CompareTypeDefinitionOrder);
             
             var fieldIndex = 1;
             var methodIndex = 1;
@@ -263,6 +256,34 @@ namespace LeXtudio.Metadata.Mutable
                 result.Add(type);
                 CollectTypes(type.NestedTypes, result);
             }
+        }
+
+        private static int CompareTypeDefinitionOrder(MutableTypeDefinition left, MutableTypeDefinition right)
+        {
+            if (ReferenceEquals(left, right))
+                return 0;
+
+            if (left == null)
+                return -1;
+
+            if (right == null)
+                return 1;
+
+            var leftToken = left.MetadataToken;
+            var rightToken = right.MetadataToken;
+            if (leftToken != 0 && rightToken != 0)
+                return leftToken.CompareTo(rightToken);
+
+            var leftIsModule = left.Name == "<Module>" && string.IsNullOrEmpty(left.Namespace);
+            var rightIsModule = right.Name == "<Module>" && string.IsNullOrEmpty(right.Namespace);
+            if (leftIsModule != rightIsModule)
+                return leftIsModule ? -1 : 1;
+
+            var namespaceComparison = string.Compare(left.Namespace, right.Namespace, StringComparison.Ordinal);
+            if (namespaceComparison != 0)
+                return namespaceComparison;
+
+            return string.Compare(left.Name, right.Name, StringComparison.Ordinal);
         }
 
         private void CreateTypeDefinition(MutableTypeDefinition type, int firstFieldIndex, int firstMethodIndex)
@@ -2161,45 +2182,6 @@ namespace LeXtudio.Metadata.Mutable
             if (field is MutableFieldDefinition fieldDef && _fieldDefHandles.TryGetValue(fieldDef, out var defHandle))
                 return defHandle;
 
-            // Narrow normalization for generic-instance member refs: if this field ref
-            // points to a field defined in the current module, prefer FieldDef token
-            // instead of emitting a stale MemberRef name.
-            if (field.DeclaringType is MutableGenericInstanceType genericDeclaringType && genericDeclaringType.ElementType != null)
-            {
-                var declaringTypeDef = _assembly.MainModule.GetType(genericDeclaringType.ElementType.FullName);
-                if (declaringTypeDef != null)
-                {
-                    MutableFieldDefinition uniqueByType = null;
-                    foreach (var candidate in declaringTypeDef.Fields)
-                    {
-                        if (!AreEquivalentTypes(candidate.FieldType, field.FieldType))
-                            continue;
-
-                        if (string.Equals(candidate.Name, field.Name, StringComparison.Ordinal) &&
-                            _fieldDefHandles.TryGetValue(candidate, out var resolvedHandle))
-                        {
-                            return resolvedHandle;
-                        }
-
-                        if (uniqueByType == null)
-                        {
-                            uniqueByType = candidate;
-                        }
-                        else
-                        {
-                            // Ambiguous signature, do not force normalization.
-                            uniqueByType = null;
-                            break;
-                        }
-                    }
-
-                    if (uniqueByType != null && _fieldDefHandles.TryGetValue(uniqueByType, out var uniqueHandle))
-                    {
-                        return uniqueHandle;
-                    }
-                }
-            }
-
             if (_fieldRefHandles.TryGetValue(field, out var existing))
                 return existing;
 
@@ -2333,6 +2315,53 @@ namespace LeXtudio.Metadata.Mutable
                 imageCharacteristics: characteristics,
                 subsystem: module.Kind == MutableModuleKind.Windows ? Subsystem.WindowsGui : Subsystem.WindowsCui);
 
+            // If the reader preserved the original image bytes, try to copy key
+            // PE header settings (ImageBase, SectionAlignment, FileAlignment)
+            // into the PEHeaderBuilder via reflection so that ManagedPEBuilder
+            // lays out sections consistently with the original image.
+            try
+            {
+                if (module.OriginalImageBytes != null && module.OriginalImageBytes.Length >= 0x40)
+                {
+                    using var origReader = new PEReader(new MemoryStream(module.OriginalImageBytes));
+                    var origPeHeader = origReader.PEHeaders.PEHeader;
+                    if (origPeHeader != null)
+                    {
+                        // Local helper to set a property if present on PEHeaderBuilder
+                        void TrySet(object target, string name, object val)
+                        {
+                            var prop = target.GetType().GetProperty(name);
+                            if (prop == null || !prop.CanWrite)
+                            {
+                                LeXtudio.Metadata.LoggerService.Logger.LogDebug($"MutableAssemblyWriter: PEHeaderBuilder missing property '{name}'");
+                                return;
+                            }
+                            var t = prop.PropertyType;
+                            object conv = val;
+                            if (val != null && !t.IsAssignableFrom(val.GetType()))
+                            {
+                                if (t == typeof(int)) conv = Convert.ToInt32(val);
+                                else if (t == typeof(uint)) conv = Convert.ToUInt32(val);
+                                else if (t == typeof(long)) conv = Convert.ToInt64(val);
+                                else if (t == typeof(ulong)) conv = Convert.ToUInt64(val);
+                                else conv = Convert.ChangeType(val, t);
+                            }
+                            LeXtudio.Metadata.LoggerService.Logger.LogDebug($"MutableAssemblyWriter: setting PEHeaderBuilder.{name} = {conv} (targetType={t})");
+                            prop.SetValue(target, conv);
+                            LeXtudio.Metadata.LoggerService.Logger.LogDebug($"MutableAssemblyWriter: set PEHeaderBuilder.{name}");
+                        }
+
+                        TrySet(peHeaderBuilder, "ImageBase", origPeHeader.ImageBase);
+                        TrySet(peHeaderBuilder, "SectionAlignment", origPeHeader.SectionAlignment);
+                        TrySet(peHeaderBuilder, "FileAlignment", origPeHeader.FileAlignment);
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore and continue — header preservation is best-effort.
+            }
+
             // Create managed PE builder
             var corFlags = CorFlags.ILOnly;
             if (module.Attributes.HasFlag(MutableModuleAttributes.Required32Bit))
@@ -2412,23 +2441,35 @@ namespace LeXtudio.Metadata.Mutable
             var newBytes = peBlob.ToArray();
             try
             {
-                if (!string.IsNullOrEmpty(module.FileName) && File.Exists(module.FileName))
+                byte[] origBytes = null;
+
+                // Prefer preserved original image bytes populated by the reader.
+                if (module.OriginalImageBytes != null && module.OriginalImageBytes.Length > 0)
                 {
-                    var origBytes = File.ReadAllBytes(module.FileName);
-                    if (origBytes.Length >= 0x40 && newBytes.Length >= 0x40)
+                    origBytes = module.OriginalImageBytes;
+                }
+                else if (!string.IsNullOrEmpty(module.FileName) && File.Exists(module.FileName))
+                {
+                    origBytes = File.ReadAllBytes(module.FileName);
+                }
+
+                if (origBytes != null && origBytes.Length >= 0x40 && newBytes.Length >= 0x40)
+                {
+                    // e_lfanew is at offset 0x3c in DOS header
+                    var origPe = BitConverter.ToInt32(origBytes, 0x3c);
+                    var newPe = BitConverter.ToInt32(newBytes, 0x3c);
+                    // COFF TimeDateStamp is at PE + 8
+                    var origTimeStampOffset = origPe + 8;
+                    var newTimeStampOffset = newPe + 8;
+                    if (origTimeStampOffset + 4 <= origBytes.Length && newTimeStampOffset + 4 <= newBytes.Length)
                     {
-                        // e_lfanew is at offset 0x3c in DOS header
-                        var origPe = BitConverter.ToInt32(origBytes, 0x3c);
-                        var newPe = BitConverter.ToInt32(newBytes, 0x3c);
-                        // COFF TimeDateStamp is at PE + 8
-                        var origTimeStampOffset = origPe + 8;
-                        var newTimeStampOffset = newPe + 8;
-                        if (origTimeStampOffset + 4 <= origBytes.Length && newTimeStampOffset + 4 <= newBytes.Length)
-                        {
-                            Buffer.BlockCopy(origBytes, origTimeStampOffset, newBytes, newTimeStampOffset, 4);
-                            LeXtudio.Metadata.LoggerService.Logger.LogDebug($"MutableAssemblyWriter: preserved TimeDateStamp from original module: 0x{BitConverter.ToInt32(origBytes, origTimeStampOffset):X8}");
-                        }
+                        Buffer.BlockCopy(origBytes, origTimeStampOffset, newBytes, newTimeStampOffset, 4);
+                        LeXtudio.Metadata.LoggerService.Logger.LogDebug($"MutableAssemblyWriter: preserved TimeDateStamp from original module: 0x{BitConverter.ToInt32(origBytes, origTimeStampOffset):X8}");
                     }
+
+                    // Optional header copying removed: we now try to set equivalent
+                    // PEHeaderBuilder properties earlier so the PE is laid out
+                    // deterministically by ManagedPEBuilder.
                 }
             }
             catch

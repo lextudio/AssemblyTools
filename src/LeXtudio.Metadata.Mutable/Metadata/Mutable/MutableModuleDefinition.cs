@@ -39,6 +39,13 @@ namespace LeXtudio.Metadata.Mutable
         public string FileName { get; set; }
 
         /// <summary>
+        /// If the module was read from a file or stream, the original image bytes
+        /// are optionally preserved here so writers can perform best-effort
+        /// header preservation even when `FileName` is repurposed by callers.
+        /// </summary>
+        public byte[] OriginalImageBytes { get; set; }
+
+        /// <summary>
         /// The kind of module (Dll, Console, Windows, etc.).
         /// </summary>
         public MutableModuleKind Kind { get; set; }

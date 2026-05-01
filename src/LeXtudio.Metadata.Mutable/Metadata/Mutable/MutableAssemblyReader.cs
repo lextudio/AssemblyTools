@@ -18,6 +18,7 @@ namespace LeXtudio.Metadata.Mutable
     /// </summary>
     public class MutableAssemblyReader : IDisposable
     {
+        private byte[] _originalImageBytes;
         private PEReader _peReader;
         private MetadataReader _metadataReader;
         private MutableModuleDefinition _module;
@@ -68,7 +69,22 @@ namespace LeXtudio.Metadata.Mutable
         public MutableAssemblyDefinition Read(Stream stream, MutableReaderParameters parameters)
         {
             _readMethodBodies = parameters?.ReadMethodBodies ?? true;
-            _peReader = new PEReader(stream);
+
+            // Read the input stream fully into memory so we can preserve the
+            // original image bytes for writers (tests and rewrite scenarios may
+            // overwrite Module.FileName to the output path before invoking a writer).
+            if (stream is MemoryStream ms)
+            {
+                _originalImageBytes = ms.ToArray();
+            }
+            else
+            {
+                using var tmp = new MemoryStream();
+                stream.CopyTo(tmp);
+                _originalImageBytes = tmp.ToArray();
+            }
+
+            _peReader = new PEReader(new MemoryStream(_originalImageBytes));
             _metadataReader = _peReader.GetMetadataReader();
             
             InitializeCaches();
@@ -80,6 +96,7 @@ namespace LeXtudio.Metadata.Mutable
             _module = ReadModuleDefinition();
             _module.Assembly = _assembly;
             _module.FileName = _fileName;
+            _module.OriginalImageBytes = _originalImageBytes;
             _assembly.Modules.Add(_module);
             _module.InitializeTypeSystem();
             
