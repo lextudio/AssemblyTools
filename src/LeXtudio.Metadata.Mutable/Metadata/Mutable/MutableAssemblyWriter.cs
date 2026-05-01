@@ -2339,10 +2339,30 @@ namespace LeXtudio.Metadata.Mutable
                 corFlags |= CorFlags.Requires32Bit;
             if (module.Attributes.HasFlag(MutableModuleAttributes.Preferred32Bit))
                 corFlags |= CorFlags.Prefers32Bit;
-            if (module.Attributes.HasFlag(MutableModuleAttributes.StrongNameSigned) || _parameters.StrongNameKeyBlob != null)
+
+            // Only set StrongNameSigned if a signing key is provided. If the original
+            // module was marked StrongNameSigned but we don't have a key blob, clear
+            // the flag to avoid producing an assembly with a missing/invalid
+            // strong-name signature which causes runtime load failures.
+            var wantsStrongName = module.Attributes.HasFlag(MutableModuleAttributes.StrongNameSigned) || _parameters.StrongNameKeyBlob != null;
+            if (wantsStrongName && _parameters.StrongNameKeyBlob == null)
+            {
+                LeXtudio.Metadata.LoggerService.Logger.LogWarning("MutableAssemblyWriter: assembly marked StrongNameSigned but no key blob provided; writing unsigned assembly and clearing StrongNameSigned flag.");
+                wantsStrongName = false;
+            }
+
+            // Set StrongNameSigned based on whether we actually want a strong-name
+            // signature (wantsStrongName) rather than solely the presence of a
+            // key blob. This keeps the flags consistent with the reserved
+            // signature directory size below.
+            if (wantsStrongName)
+            {
                 corFlags |= CorFlags.StrongNameSigned;
-            if (module.Attributes.HasFlag(MutableModuleAttributes.StrongNameSigned) || _parameters.StrongNameKeyBlob != null)
-                corFlags |= CorFlags.StrongNameSigned;
+            }
+            else
+            {
+                corFlags &= ~CorFlags.StrongNameSigned;
+            }
 
             MethodDefinitionHandle entryPoint = default;
             if (module.Kind != MutableModuleKind.Dll)
@@ -2364,6 +2384,11 @@ namespace LeXtudio.Metadata.Mutable
                 entryPoint = (MethodDefinitionHandle)entryPointHandle;
             }
 
+            LeXtudio.Metadata.LoggerService.Logger.LogDebug($"MutableAssemblyWriter: module.Attributes={module.Attributes} wantsStrongName={(wantsStrongName ? 1 : 0)} corFlags={corFlags}");
+            var strongNameSignatureSize = wantsStrongName && _parameters.StrongNameKeyBlob != null
+                ? _parameters.StrongNameKeyBlob.Length
+                : 0;
+
             var peBuilder = new ManagedPEBuilder(
                 peHeaderBuilder,
                 new MetadataRootBuilder(_metadata),
@@ -2372,16 +2397,49 @@ namespace LeXtudio.Metadata.Mutable
                 managedResources: _managedResources,
                 nativeResources: null,
                 debugDirectoryBuilder: null,
-                strongNameSignatureSize: 0,
+                strongNameSignatureSize: strongNameSignatureSize,
                 entryPoint: entryPoint,
                 flags: corFlags);
 
             // Write to blob
             var peBlob = new BlobBuilder();
             peBuilder.Serialize(peBlob);
-            
+
+            // Attempt to preserve a small set of original PE header fields (timestamp)
+            // to minimize binary churn when performing a rewrite. If the original
+            // module file is available via module.FileName, copy the 4-byte
+            // COFF TimeDateStamp from the original into the newly generated PE.
+            var newBytes = peBlob.ToArray();
+            try
+            {
+                if (!string.IsNullOrEmpty(module.FileName) && File.Exists(module.FileName))
+                {
+                    var origBytes = File.ReadAllBytes(module.FileName);
+                    if (origBytes.Length >= 0x40 && newBytes.Length >= 0x40)
+                    {
+                        // e_lfanew is at offset 0x3c in DOS header
+                        var origPe = BitConverter.ToInt32(origBytes, 0x3c);
+                        var newPe = BitConverter.ToInt32(newBytes, 0x3c);
+                        // COFF TimeDateStamp is at PE + 8
+                        var origTimeStampOffset = origPe + 8;
+                        var newTimeStampOffset = newPe + 8;
+                        if (origTimeStampOffset + 4 <= origBytes.Length && newTimeStampOffset + 4 <= newBytes.Length)
+                        {
+                            Buffer.BlockCopy(origBytes, origTimeStampOffset, newBytes, newTimeStampOffset, 4);
+                            LeXtudio.Metadata.LoggerService.Logger.LogDebug($"MutableAssemblyWriter: preserved TimeDateStamp from original module: 0x{BitConverter.ToInt32(origBytes, origTimeStampOffset):X8}");
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Be conservative: if anything fails here, fall back to writing the
+                // original generated blob unchanged.
+                newBytes = peBlob.ToArray();
+            }
+
             // Write to stream
-            peBlob.WriteContentTo(stream);
+            stream.Write(newBytes, 0, newBytes.Length);
         }
 
         private void WriteResources()
