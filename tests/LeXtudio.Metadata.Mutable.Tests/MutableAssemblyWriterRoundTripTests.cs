@@ -216,6 +216,58 @@ public class MutableAssemblyWriterRoundTripTests
     }
 
     [Fact]
+    public void RoundTrip_IndexerProperty_PreservesIndexedSignature()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_indexer_property_roundtrip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var asmPath = Path.Combine(tempDir, "IndexerPropertyRoundTrip.dll");
+        var rewrittenPath = Path.Combine(tempDir, "IndexerPropertyRoundTrip_rw.dll");
+
+        try
+        {
+            EmitIndexerPropertyAssembly(asmPath);
+
+            var reader = new MutableAssemblyReader();
+            var assembly = reader.Read(asmPath, new MutableReaderParameters { ReadMethodBodies = true });
+            var property = assembly.MainModule.Types
+                .Single(t => t.FullName == "RoundTripTest.IndexerHost")
+                .Properties
+                .Single(p => p.Name == "Item");
+            Assert.Single(property.Parameters);
+            Assert.Equal("System.Int32", property.Parameters[0].ParameterType.FullName);
+
+            assembly.MainModule.FileName = rewrittenPath;
+
+            var writer = new MutableAssemblyWriter(assembly);
+            writer.Write(rewrittenPath);
+
+            var rewritten = reader.Read(rewrittenPath, new MutableReaderParameters { ReadMethodBodies = true });
+            property = rewritten.MainModule.Types
+                .Single(t => t.FullName == "RoundTripTest.IndexerHost")
+                .Properties
+                .Single(p => p.Name == "Item");
+            Assert.Single(property.Parameters);
+            Assert.Equal("System.Int32", property.Parameters[0].ParameterType.FullName);
+
+            var ctx = new AssemblyLoadContext("IndexerPropertyRoundTrip_" + Guid.NewGuid(), isCollectible: true);
+            var loaded = ctx.LoadFromAssemblyPath(rewrittenPath);
+            var type = loaded.GetType("RoundTripTest.IndexerHost", throwOnError: true)!;
+            var reflectionProperty = type.GetProperty("Item", BindingFlags.Public | BindingFlags.Instance);
+            Assert.NotNull(reflectionProperty);
+            Assert.Single(reflectionProperty!.GetIndexParameters());
+
+            var instance = Activator.CreateInstance(type);
+            reflectionProperty.SetValue(instance, 27, new object[] { 1 });
+            Assert.Equal(27, reflectionProperty.GetValue(instance, new object[] { 1 }));
+            ctx.Unload();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
     public void RoundTrip_NestedGenericInstanceConstructor_PreservesMemberReference()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "wxsg_nested_generic_ctor_roundtrip_" + Guid.NewGuid().ToString("N"));
@@ -770,6 +822,76 @@ public class MutableAssemblyWriterRoundTripTests
         il.Emit(OpCodes.Ret);
         useBuilder.CreateType();
 
+        asmBuilder.Save(outputPath);
+    }
+
+    private static void EmitIndexerPropertyAssembly(string outputPath)
+    {
+        var asmName = new AssemblyName("IndexerPropertyRoundTrip");
+        var asmBuilder = new PersistedAssemblyBuilder(asmName, typeof(object).Assembly);
+        var modBuilder = asmBuilder.DefineDynamicModule("IndexerPropertyRoundTrip");
+
+        var typeBuilder = modBuilder.DefineType(
+            "RoundTripTest.IndexerHost",
+            TypeAttributes.Public | TypeAttributes.Class);
+
+        var backingField = typeBuilder.DefineField(
+            "_values",
+            typeof(int[]),
+            FieldAttributes.Private | FieldAttributes.InitOnly);
+
+        var constructor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            Type.EmptyTypes);
+        var il = constructor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Newarr, typeof(int));
+        il.Emit(OpCodes.Stfld, backingField);
+        il.Emit(OpCodes.Ret);
+
+        var getter = typeBuilder.DefineMethod(
+            "get_Item",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
+            typeof(int),
+            new[] { typeof(int) });
+        il = getter.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, backingField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldelem_I4);
+        il.Emit(OpCodes.Ret);
+
+        var setter = typeBuilder.DefineMethod(
+            "set_Item",
+            MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
+            typeof(void),
+            new[] { typeof(int), typeof(int) });
+        il = setter.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, backingField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stelem_I4);
+        il.Emit(OpCodes.Ret);
+
+        var property = typeBuilder.DefineProperty(
+            "Item",
+            PropertyAttributes.None,
+            CallingConventions.HasThis,
+            typeof(int),
+            new[] { typeof(int) });
+        property.SetGetMethod(getter);
+        property.SetSetMethod(setter);
+
+        var defaultMemberConstructor = typeof(System.Reflection.DefaultMemberAttribute)
+            .GetConstructor(new[] { typeof(string) })!;
+        typeBuilder.SetCustomAttribute(new CustomAttributeBuilder(defaultMemberConstructor, new object[] { "Item" }));
+
+        typeBuilder.CreateType();
         asmBuilder.Save(outputPath);
     }
 

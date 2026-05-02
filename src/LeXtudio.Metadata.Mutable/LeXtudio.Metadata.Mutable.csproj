@@ -5,6 +5,7 @@
     <RootNamespace>LeXtudio.Metadata.Mutable</RootNamespace>
     <AssemblyName>LeXtudio.Metadata.Mutable</AssemblyName>
     <Nullable>enable</Nullable>
+    <EnableGitVersionMsBuild Condition="'$(EnableGitVersionMsBuild)' == ''">true</EnableGitVersionMsBuild>
   </PropertyGroup>
 
   <!-- NuGet packaging metadata to enable `dotnet pack` -->
@@ -47,7 +48,7 @@
   </ItemGroup>
 
   <!-- Integrate GitVersion to calculate package version from Git history/tags when available -->
-  <ItemGroup>
+  <ItemGroup Condition="'$(EnableGitVersionMsBuild)' == 'true'">
     <PackageReference Include="GitVersion.MsBuild" Version="6.5.1" PrivateAssets="all" />
   </ItemGroup>
 

@@ -1248,11 +1248,23 @@ namespace LeXtudio.Metadata.Mutable
             var name = _metadataReader.GetString(propDef.Name);
             var sig = propDef.DecodeSignature(GetTypeProvider(), null);
 
-            var prop = new MutablePropertyDefinition(name, (PropertyAttributes)0, sig.ReturnType)
+            var prop = new MutablePropertyDefinition(name, propDef.Attributes, sig.ReturnType)
             {
                 DeclaringType = declaringType,
                 MetadataToken = MetadataTokens.GetToken(handle)
             };
+
+            if (sig.ParameterTypes.Length > 0)
+            {
+                prop.Parameters.Capacity = sig.ParameterTypes.Length;
+                for (int i = 0; i < sig.ParameterTypes.Length; i++)
+                {
+                    prop.Parameters.Add(new MutableParameterDefinition($"param{i}", ParameterAttributes.None, sig.ParameterTypes[i])
+                    {
+                        Index = i,
+                    });
+                }
+            }
 
             var accessors = propDef.GetAccessors();
             if (!accessors.Getter.IsNil && _methodDefCache.TryGetValue(accessors.Getter, out var getter))

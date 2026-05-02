@@ -951,7 +951,7 @@ namespace LeXtudio.Metadata.Mutable
             var signature = EncodePropertySignature(prop);
             
             var handle = _metadata.AddProperty(
-                (PropertyAttributes)0,
+                prop.Attributes,
                 _metadata.GetOrAddString(prop.Name),
                 _metadata.GetOrAddBlob(signature));
 
@@ -1649,13 +1649,19 @@ namespace LeXtudio.Metadata.Mutable
         {
             var builder = new BlobBuilder();
             var encoder = new BlobEncoder(builder);
+            var parameterCount = prop.Parameters.Count;
             
-            // Property signature: PROPERTY hasThis paramCount returnType params...
-            // For now, simple property with no parameters
             encoder.PropertySignature(!prop.GetMethod?.IsStatic ?? true)
-                .Parameters(0, 
+                .Parameters(parameterCount,
                     returnType => EncodeReturnType(returnType, prop.PropertyType),
-                    parameters => { });
+                    parameters =>
+                    {
+                        for (int i = 0; i < parameterCount; i++)
+                        {
+                            var parameter = prop.Parameters[i];
+                            EncodeTypeToBuilder(parameters.AddParameter().Type(), parameter.ParameterType);
+                        }
+                    });
             
             return builder;
         }
