@@ -11,6 +11,8 @@ namespace LeXtudio.Metadata.Mutable
     public class MutableTypeReference : IType
     {
         protected string _cachedFullName;
+        private string _originalFullName;
+        private bool _originalFullNameCaptured;
 
         /// <summary>
         /// Creates a new type reference.
@@ -109,6 +111,20 @@ namespace LeXtudio.Metadata.Mutable
         public void InvalidateFullNameCache()
         {
             _cachedFullName = null;
+        }
+
+        /// <summary>
+        /// Gets the original full name of the type, before any renaming occurred.
+        /// This is captured on first access and used to match type references after their declaring type is renamed.
+        /// </summary>
+        public string GetOriginalFullName()
+        {
+            if (_originalFullNameCaptured)
+                return _originalFullName;
+
+            _originalFullName = FullName;
+            _originalFullNameCaptured = true;
+            return _originalFullName;
         }
 
         /// <summary>
