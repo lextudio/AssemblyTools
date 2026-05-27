@@ -410,6 +410,12 @@ namespace LeXtudio.Metadata.Mutable
                 _metadata.GetOrAddBlob(signature));
             
             _fieldDefHandles[field] = handle;
+
+            // Re-emit FieldLayout table entries for explicit-layout fields.
+            if (field.Offset >= 0)
+            {
+                _metadata.AddFieldLayout(handle, field.Offset);
+            }
             
             // Write constant if present
             if (field.Constant != null)

@@ -494,6 +494,9 @@ namespace LeXtudio.Metadata.Mutable
                 DeclaringType = declaringType,
                 MetadataToken = MetadataTokens.GetToken(handle)
             };
+
+            // Preserve FieldLayout table entries used by explicit-layout structs.
+            field.Offset = fieldDef.GetOffset();
             
             // Read initial value if present
             if ((fieldDef.Attributes & FieldAttributes.HasFieldRVA) != 0)

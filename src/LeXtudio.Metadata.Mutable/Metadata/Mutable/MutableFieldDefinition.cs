@@ -108,6 +108,11 @@ namespace LeXtudio.Metadata.Mutable
         public int MetadataToken { get; set; }
 
         /// <summary>
+        /// Field layout offset for explicit-layout types (-1 means unspecified).
+        /// </summary>
+        public int Offset { get; set; } = -1;
+
+        /// <summary>
         /// Custom attributes applied to this field.
         /// </summary>
         public List<MutableCustomAttribute> CustomAttributes { get; }
