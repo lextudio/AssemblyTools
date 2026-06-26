@@ -8,9 +8,9 @@ if /i "%~1"=="help" goto :usage
 if /i "%~1"=="--help" goto :usage
 if /i "%~1"=="/?" goto :usage
 
-call build.all.bat
+call "%SCRIPT_DIR%build.all.bat"
 if %errorlevel% neq 0 exit /b %errorlevel%
-call pack.all.bat
+call "%SCRIPT_DIR%pack.all.bat"
 if %errorlevel% neq 0 exit /b %errorlevel%
 
 if /i "%~1"=="publish" (

@@ -30,6 +30,11 @@ for %%f in (%PACKAGE_DIR%\*.nupkg) do (
   if errorlevel 1 goto :fail
 )
 
+for %%f in (%PACKAGE_DIR%\*.snupkg) do (
+  %NUGET_EXE% push %%f -Source https://api.nuget.org/v3/index.json -ApiKey "%NUGET_API_KEY%"
+  if errorlevel 1 goto :fail
+)
+
 echo Publish complete.
 popd >nul
 exit /b 0

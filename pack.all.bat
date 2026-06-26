@@ -11,6 +11,7 @@ set "OUTPUT_DIR=artifacts\nuget"
 if exist "%OUTPUT_DIR%" (
   echo Cleaning old packages from %OUTPUT_DIR%...
   del /q "%OUTPUT_DIR%\*.nupkg" 2>nul
+  del /q "%OUTPUT_DIR%\*.snupkg" 2>nul
 )
 
 if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%"
